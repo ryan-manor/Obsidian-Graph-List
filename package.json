@@ -1,0 +1,16 @@
+{
+  "name": "obsidian-local-graph-list",
+  "version": "0.1.0",
+  "description": "Local graph as a list view",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.7.0"
+  }
+}

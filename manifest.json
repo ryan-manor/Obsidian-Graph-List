@@ -1,0 +1,9 @@
+{
+  "id": "local-graph-list",
+  "name": "Local Graph List",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "The local graph as a Bases-style list: inbound and outbound links with the properties you care about, sorted how you want.",
+  "author": "Ryan Manor",
+  "isDesktopOnly": false
+}
