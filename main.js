@@ -480,12 +480,7 @@ function buildMentionIndex(app) {
     const lower = name.toLowerCase();
     const first = (_e = lower.match(WORD)) == null ? void 0 : _e[0];
     if (!first) continue;
-    const candidate = {
-      name,
-      lower,
-      file,
-      caseSensitive: !/\s/.test(name)
-    };
+    const candidate = { name, lower, file };
     const bucket = index.get(first);
     if (bucket) bucket.push(candidate);
     else index.set(first, [candidate]);
@@ -535,10 +530,9 @@ async function findUnlinkedMentions(app, file, index) {
   );
 }
 function findOccurrences(text, lower, candidate, blocked) {
-  const haystack = candidate.caseSensitive ? text : lower;
-  const needle = candidate.caseSensitive ? candidate.name : candidate.lower;
+  const needle = candidate.lower;
   const hits = [];
-  let start = haystack.indexOf(needle);
+  let start = lower.indexOf(needle);
   while (start !== -1) {
     const end = start + needle.length;
     const before = start > 0 ? text[start - 1] : " ";
@@ -546,7 +540,7 @@ function findOccurrences(text, lower, candidate, blocked) {
     if (!WORD_CHAR.test(before) && !WORD_CHAR.test(after) && !isBlocked(blocked, start, end)) {
       hits.push(start);
     }
-    start = haystack.indexOf(needle, start + 1);
+    start = lower.indexOf(needle, start + 1);
   }
   return hits;
 }
@@ -608,22 +602,23 @@ async function linkMention(app, source, mention) {
   const candidate = {
     name: mention.name,
     lower: mention.name.toLowerCase(),
-    file: mention.file,
-    caseSensitive: !/\s/.test(mention.name)
+    file: mention.file
   };
-  const link = app.fileManager.generateMarkdownLink(
-    mention.file,
-    source.path,
-    void 0,
-    mention.name === mention.file.basename ? void 0 : mention.name
-  );
   let linked = false;
   await app.vault.process(source, (data) => {
     const hits = findOccurrences(data, data.toLowerCase(), candidate, blockedRanges(data, null));
     if (hits.length === 0) return data;
     const start = hits[0];
+    const end = start + mention.name.length;
+    const shown = data.slice(start, end);
+    const link = app.fileManager.generateMarkdownLink(
+      mention.file,
+      source.path,
+      void 0,
+      shown === mention.file.basename ? void 0 : shown
+    );
     linked = true;
-    return data.slice(0, start) + link + data.slice(start + mention.name.length);
+    return data.slice(0, start) + link + data.slice(end);
   });
   return linked;
 }

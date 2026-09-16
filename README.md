@@ -71,8 +71,9 @@ Notes named in the text but not linked are appended to the outbound group as gho
 with a mention count and a link button that turns the first occurrence into a wikilink.
 Accepting one re-renders the list, so the row turns solid and sorts with the rest.
 
-Obsidian's own pane matches case-insensitive substrings and renders one row per
-occurrence. Measured on a working note, that fires 37 times across 17 targets where 4
+Matching is case-insensitive like Obsidian's own, so a lowercase "style" still nudges
+towards the Style page. What differs is everything around the match. Obsidian renders
+one row per occurrence and filters nothing. Measured on a working note, that fires 37 times across 17 targets where 4
 across 3 survive here. The filtering is structural, not a ranking:
 
 - Whole words only, so `Bases-style` is not a mention of "Style Understanding Home".
@@ -83,10 +84,6 @@ across 3 survive here. The filtering is structural, not a ranking:
 - Targets this note already links are dropped, so a note linked once does not keep
   suggesting itself for every other time it appears.
 - One row per target rather than per occurrence, with all occurrences counted.
-- Single-word names must match case. Without that, every note titled with a common
-  noun fires on ordinary prose: "Style" matched "a list style view", "Home" matched
-  "project home page".
-
 What survives that is either specific enough to be right or ambiguous in a way only
 meaning can settle, for example "ACL" meaning Andersen-Chung-Lang in a note about
 PageRank rather than the Adobe Context Layer wiki. Proximity does not help there:
