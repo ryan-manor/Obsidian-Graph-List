@@ -135,3 +135,36 @@
 .lgl-empty-properties {
   padding-bottom: var(--size-4-2);
 }
+
+/* Unlinked mentions: present but not yet part of the graph. The link button
+   only appears on hover so the ghost rows stay quiet at rest. */
+.lgl-ghost {
+  grid-template-columns: auto 1fr auto;
+  opacity: 0.55;
+}
+
+.lgl-ghost:hover {
+  opacity: 1;
+}
+
+.lgl-ghost .lgl-title {
+  font-style: italic;
+}
+
+.lgl-mention-count {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.lgl-accept {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
+  padding: 0 var(--size-2-2);
+  opacity: 0;
+}
+
+.lgl-ghost:hover .lgl-accept,
+.lgl-accept:focus-visible {
+  opacity: 1;
+}

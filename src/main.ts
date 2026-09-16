@@ -6,12 +6,16 @@ import {
 } from "./settings";
 import { LocalGraphListView, VIEW_TYPE_LOCAL_GRAPH_LIST } from "./view";
 import { buildAdjacency, type AdjMap } from "./ppr";
+import { buildMentionIndex, type MentionIndex } from "./mentions";
 
 export default class LocalGraphListPlugin extends Plugin {
   settings: LocalGraphListSettings = DEFAULT_SETTINGS;
 
   /** Whole-vault adjacency, rebuilt only when links actually change. */
   private adjacency: AdjMap | null = null;
+
+  /** Every title and alias in the vault, rebuilt alongside the adjacency. */
+  private mentionIndex: MentionIndex | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -32,6 +36,7 @@ export default class LocalGraphListPlugin extends Plugin {
     this.registerEvent(
       this.app.metadataCache.on("resolved", () => {
         this.adjacency = null;
+        this.mentionIndex = null;
       })
     );
 
@@ -63,6 +68,14 @@ export default class LocalGraphListPlugin extends Plugin {
       this.adjacency = buildAdjacency(this.app.metadataCache.resolvedLinks);
     }
     return this.adjacency;
+  }
+
+  /** Title and alias lookup for unlinked mentions, cached on the same cycle. */
+  getMentionIndex(): MentionIndex {
+    if (!this.mentionIndex) {
+      this.mentionIndex = buildMentionIndex(this.app);
+    }
+    return this.mentionIndex;
   }
 
   /** Re-render every open instance after a settings change. */

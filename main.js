@@ -36,7 +36,8 @@ var DEFAULT_SETTINGS = {
   properties: [SORT_PROPERTY, "tags"],
   showPropertyNames: false,
   showIndex: true,
-  includeAttachments: false
+  includeAttachments: false,
+  showMentions: true
 };
 var FILE_PROPERTIES = [
   "file.name",
@@ -141,6 +142,14 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
     new import_obsidian.Setting(containerEl).setName("Number rows").setDesc("Show a running count beside each title").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showIndex).onChange(async (value) => {
         this.plugin.settings.showIndex = value;
+        await this.commit();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Show unlinked mentions").setDesc(
+      "Append notes this one names but does not link, as ghost rows with a link button"
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.showMentions).onChange(async (value) => {
+        this.plugin.settings.showMentions = value;
         await this.commit();
       })
     );
@@ -451,6 +460,174 @@ function proximityScores(adj, source) {
   return scores;
 }
 
+// src/mentions.ts
+var MIN_NAME_LENGTH = 3;
+var WORD_CHAR = /[\p{L}\p{N}_-]/u;
+var WORD = /[\p{L}\p{N}]+/gu;
+function buildMentionIndex(app) {
+  var _a, _b, _c, _d, _e;
+  const index = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Set();
+  const suggestions = (_c = (_b = (_a = app.metadataCache).getLinkSuggestions) == null ? void 0 : _b.call(_a)) != null ? _c : [];
+  for (const suggestion of suggestions) {
+    const file = suggestion.file;
+    if (!file || file.extension !== "md") continue;
+    const name = (_d = suggestion.alias) != null ? _d : file.basename;
+    if (name.length < MIN_NAME_LENGTH) continue;
+    const key = `${file.path}\0${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const lower = name.toLowerCase();
+    const first = (_e = lower.match(WORD)) == null ? void 0 : _e[0];
+    if (!first) continue;
+    const candidate = {
+      name,
+      lower,
+      file,
+      caseSensitive: !/\s/.test(name)
+    };
+    const bucket = index.get(first);
+    if (bucket) bucket.push(candidate);
+    else index.set(first, [candidate]);
+  }
+  return index;
+}
+async function findUnlinkedMentions(app, file, index) {
+  var _a, _b;
+  const text = await app.vault.cachedRead(file);
+  const cache = app.metadataCache.getFileCache(file);
+  const blocked = blockedRanges(text, cache);
+  const linked = new Set(Object.keys((_a = app.metadataCache.resolvedLinks[file.path]) != null ? _a : {}));
+  const lower = text.toLowerCase();
+  const words = new Set((_b = lower.match(WORD)) != null ? _b : []);
+  const hits = [];
+  for (const [first, candidates] of index) {
+    if (!words.has(first)) continue;
+    for (const candidate of candidates) {
+      if (candidate.file.path === file.path) continue;
+      if (linked.has(candidate.file.path)) continue;
+      for (const start of findOccurrences(text, lower, candidate, blocked)) {
+        hits.push({ start, end: start + candidate.name.length, candidate });
+      }
+    }
+  }
+  hits.sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start);
+  const taken = [];
+  const found = /* @__PURE__ */ new Map();
+  for (const hit of hits) {
+    if (taken.some(([start, end]) => hit.start < end && hit.end > start)) continue;
+    taken.push([hit.start, hit.end]);
+    const entry = found.get(hit.candidate.file.path);
+    if (!entry) {
+      found.set(hit.candidate.file.path, {
+        file: hit.candidate.file,
+        name: hit.candidate.name,
+        count: 1,
+        first: hit.start
+      });
+      continue;
+    }
+    entry.count += 1;
+    if (hit.candidate.name === entry.name) entry.first = Math.min(entry.first, hit.start);
+  }
+  return [...found.values()].sort(
+    (a, b) => b.count - a.count || b.name.length - a.name.length || a.file.basename.localeCompare(b.file.basename)
+  );
+}
+function findOccurrences(text, lower, candidate, blocked) {
+  const haystack = candidate.caseSensitive ? text : lower;
+  const needle = candidate.caseSensitive ? candidate.name : candidate.lower;
+  const hits = [];
+  let start = haystack.indexOf(needle);
+  while (start !== -1) {
+    const end = start + needle.length;
+    const before = start > 0 ? text[start - 1] : " ";
+    const after = end < text.length ? text[end] : " ";
+    if (!WORD_CHAR.test(before) && !WORD_CHAR.test(after) && !isBlocked(blocked, start, end)) {
+      hits.push(start);
+    }
+    start = haystack.indexOf(needle, start + 1);
+  }
+  return hits;
+}
+var BLOCKED_PATTERNS = [
+  /```[\s\S]*?(?:```|$)/g,
+  // fenced code
+  /`[^`\n]*`/g,
+  // inline code
+  /https?:\/\/[^\s)<>]+/g,
+  // bare URLs
+  /\[[^\]\n]*\]\([^)\n]*\)/g,
+  // markdown links, both halves
+  /\[\[[^\]\n]*\]\]/g,
+  // wikilinks, including unresolved ones
+  /#[\p{L}\p{N}/_-]+/gu
+  // tags
+];
+var FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---/;
+function blockedRanges(text, cache) {
+  var _a, _b, _c;
+  const ranges = [];
+  for (const section of (_a = cache == null ? void 0 : cache.sections) != null ? _a : []) {
+    if (section.type === "yaml" || section.type === "code") {
+      ranges.push([section.position.start.offset, section.position.end.offset]);
+    }
+  }
+  for (const ref of [...(_b = cache == null ? void 0 : cache.links) != null ? _b : [], ...(_c = cache == null ? void 0 : cache.embeds) != null ? _c : []]) {
+    ranges.push([ref.position.start.offset, ref.position.end.offset]);
+  }
+  const frontmatter = text.match(FRONTMATTER);
+  if (frontmatter) ranges.push([0, frontmatter[0].length]);
+  for (const pattern of BLOCKED_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      ranges.push([match.index, match.index + match[0].length]);
+    }
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+    else merged.push([range[0], range[1]]);
+  }
+  return merged;
+}
+function isBlocked(ranges, start, end) {
+  let low = 0;
+  let high = ranges.length - 1;
+  while (low <= high) {
+    const mid = low + high >> 1;
+    const [rangeStart, rangeEnd] = ranges[mid];
+    if (end <= rangeStart) high = mid - 1;
+    else if (start >= rangeEnd) low = mid + 1;
+    else return true;
+  }
+  return false;
+}
+async function linkMention(app, source, mention) {
+  const candidate = {
+    name: mention.name,
+    lower: mention.name.toLowerCase(),
+    file: mention.file,
+    caseSensitive: !/\s/.test(mention.name)
+  };
+  const link = app.fileManager.generateMarkdownLink(
+    mention.file,
+    source.path,
+    void 0,
+    mention.name === mention.file.basename ? void 0 : mention.name
+  );
+  let linked = false;
+  await app.vault.process(source, (data) => {
+    const hits = findOccurrences(data, data.toLowerCase(), candidate, blockedRanges(data, null));
+    if (hits.length === 0) return data;
+    const start = hits[0];
+    linked = true;
+    return data.slice(0, start) + link + data.slice(start + mention.name.length);
+  });
+  return linked;
+}
+
 // src/view.ts
 var VIEW_TYPE_LOCAL_GRAPH_LIST = "local-graph-list";
 var SORT_LABELS = {
@@ -475,6 +652,8 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     /** File the current render is for, so metadata events can be filtered cheaply. */
     this.renderedPaths = /* @__PURE__ */ new Set();
     this.scheduleRender = (0, import_obsidian3.debounce)(() => this.render(), 150, true);
+    /** Discards an in-flight render whose mention scan was overtaken. */
+    this.renderToken = 0;
     this.plugin = plugin;
   }
   getViewType() {
@@ -506,10 +685,19 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     return this.app.workspace.getActiveFile();
   }
   render() {
+    void this.renderAsync();
+  }
+  async renderAsync() {
+    const token = ++this.renderToken;
+    const file = this.getTargetFile();
+    let mentions = [];
+    if (file && this.plugin.settings.showMentions) {
+      mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
+      if (token !== this.renderToken) return;
+    }
     const { contentEl } = this;
     contentEl.empty();
     this.renderedPaths.clear();
-    const file = this.getTargetFile();
     this.renderHeader(contentEl, file);
     if (!file) {
       contentEl.createDiv({ cls: "lgl-empty", text: "No file open." });
@@ -519,20 +707,78 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     const proximity = proximityScores(this.plugin.getAdjacency(), file.path);
     const groups = buildGroups(this.app, file, this.plugin.settings, proximity);
     const total = groups.reduce((sum, group) => sum + group.files.length, 0);
-    if (total === 0) {
+    if (total === 0 && mentions.length === 0) {
       contentEl.createDiv({ cls: "lgl-empty", text: "No linked notes." });
       return;
     }
-    for (const group of groups) {
-      if (group.files.length === 0) continue;
+    groups.forEach((group, groupIndex) => {
+      const ghosts = groupIndex === 0 ? mentions : [];
+      if (group.files.length === 0 && ghosts.length === 0) return;
       const header = contentEl.createDiv({ cls: "lgl-group-header" });
       header.createSpan({ cls: "lgl-group-label", text: group.label });
-      header.createSpan({ cls: "lgl-group-count", text: String(group.files.length) });
+      header.createSpan({
+        cls: "lgl-group-count",
+        text: ghosts.length ? `${group.files.length} +${ghosts.length}` : String(group.files.length)
+      });
       const list = contentEl.createDiv({ cls: "lgl-list" });
       group.files.forEach((neighbor, index) => {
         this.renderedPaths.add(neighbor.path);
         this.renderItem(list, neighbor, file, index + 1, proximity);
       });
+      ghosts.forEach((mention, index) => {
+        this.renderMention(list, mention, file, group.files.length + index + 1);
+      });
+    });
+  }
+  /**
+   * A note this one names but does not link yet. Rendered in the same list so
+   * accepting one just turns the row solid and lets it sort with the rest.
+   */
+  renderMention(parent, mention, source, index) {
+    const item = parent.createDiv({ cls: "lgl-item lgl-ghost" });
+    if (this.plugin.settings.showIndex) {
+      item.createSpan({ cls: "lgl-index", text: `${index}.` });
+    }
+    const title = item.createEl("a", {
+      cls: "lgl-title internal-link",
+      text: mention.file.basename,
+      href: mention.file.path
+    });
+    title.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      this.app.workspace.openLinkText(
+        mention.file.path,
+        source.path,
+        import_obsidian3.Keymap.isModEvent(evt)
+      );
+    });
+    title.addEventListener("mouseover", (evt) => {
+      this.app.workspace.trigger("hover-link", {
+        event: evt,
+        source: VIEW_TYPE_LOCAL_GRAPH_LIST,
+        hoverParent: this,
+        targetEl: title,
+        linktext: mention.file.path,
+        sourcePath: source.path
+      });
+    });
+    const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
+    (0, import_obsidian3.setIcon)(accept, "link");
+    accept.setAttribute("aria-label", `Link "${mention.name}"`);
+    accept.addEventListener("click", async (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      if (await linkMention(this.app, source, mention)) this.render();
+    });
+    const propsEl = item.createDiv({ cls: "lgl-props" });
+    const row = propsEl.createDiv({ cls: "lgl-prop" });
+    const values = row.createDiv({ cls: "lgl-prop-values" });
+    values.createSpan({
+      cls: "lgl-value lgl-mention-count",
+      text: mention.count === 1 ? "1 mention" : `${mention.count} mentions`
+    });
+    if (mention.name !== mention.file.basename) {
+      values.createSpan({ cls: "lgl-value lgl-pill", text: mention.name });
     }
   }
   renderHeader(parent, file) {
@@ -703,6 +949,8 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
     this.settings = DEFAULT_SETTINGS;
     /** Whole-vault adjacency, rebuilt only when links actually change. */
     this.adjacency = null;
+    /** Every title and alias in the vault, rebuilt alongside the adjacency. */
+    this.mentionIndex = null;
   }
   async onload() {
     await this.loadSettings();
@@ -719,6 +967,7 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
     this.registerEvent(
       this.app.metadataCache.on("resolved", () => {
         this.adjacency = null;
+        this.mentionIndex = null;
       })
     );
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));
@@ -742,6 +991,13 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       this.adjacency = buildAdjacency(this.app.metadataCache.resolvedLinks);
     }
     return this.adjacency;
+  }
+  /** Title and alias lookup for unlinked mentions, cached on the same cycle. */
+  getMentionIndex() {
+    if (!this.mentionIndex) {
+      this.mentionIndex = buildMentionIndex(this.app);
+    }
+    return this.mentionIndex;
   }
   /** Re-render every open instance after a settings change. */
   refreshViews() {

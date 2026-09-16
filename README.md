@@ -37,6 +37,7 @@ sort control in the view header writes to the same settings.
 | Show property names | Label each value with its key |
 | Number rows | Running count beside each title |
 | Include attachments | Show linked images and PDFs alongside notes |
+| Show unlinked mentions | Append notes this one names but does not link |
 
 ## Ranking by graph proximity
 
@@ -63,6 +64,33 @@ sweep quantity, mass/degree, inverts that: on a note about Seek's specificity
 boost it put a two-link daily note first and buried the project home page last
 at 0.09 — sweep order is built for finding cluster boundaries, not for ranking
 inside a neighbourhood.
+
+## Unlinked mentions
+
+Notes named in the text but not linked are appended to the outbound group as ghost rows,
+with a mention count and a link button that turns the first occurrence into a wikilink.
+Accepting one re-renders the list, so the row turns solid and sorts with the rest.
+
+Obsidian's own pane matches case-insensitive substrings and renders one row per
+occurrence. Measured on a working note, that fires 37 times across 17 targets where 4
+across 3 survive here. The filtering is structural, not a ranking:
+
+- Whole words only, so `Bases-style` is not a mention of "Style Understanding Home".
+- Longest match wins an overlap, so the alias "Lightroom" cannot claim the tail of
+  "Adobe Lightroom" and strand the first word.
+- Frontmatter, code blocks, inline code, URLs, existing links and tags are skipped.
+  These are the places where linking would break the formatting.
+- Targets this note already links are dropped, so a note linked once does not keep
+  suggesting itself for every other time it appears.
+- One row per target rather than per occurrence, with all occurrences counted.
+- Single-word names must match case. Without that, every note titled with a common
+  noun fires on ordinary prose: "Style" matched "a list style view", "Home" matched
+  "project home page".
+
+What survives that is either specific enough to be right or ambiguous in a way only
+meaning can settle, for example "ACL" meaning Andersen-Chung-Lang in a note about
+PageRank rather than the Adobe Context Layer wiki. Proximity does not help there:
+an unlinked candidate usually shares no neighbours with the note, so it scores zero.
 
 ## Development
 

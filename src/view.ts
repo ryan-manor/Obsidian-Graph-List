@@ -11,6 +11,7 @@ import type LocalGraphListPlugin from "./main";
 import { buildGroups, getPropertyValue, resolveSortProperty, unwrapLink } from "./graph";
 import { PROXIMITY_PROPERTY, SORT_PROPERTY, type SortKey } from "./settings";
 import { proximityScores } from "./ppr";
+import { findUnlinkedMentions, linkMention, type Mention } from "./mentions";
 
 export const VIEW_TYPE_LOCAL_GRAPH_LIST = "local-graph-list";
 
@@ -42,6 +43,9 @@ export class LocalGraphListView extends ItemView {
   private renderedPaths = new Set<string>();
 
   private scheduleRender = debounce(() => this.render(), 150, true);
+
+  /** Discards an in-flight render whose mention scan was overtaken. */
+  private renderToken = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: LocalGraphListPlugin) {
     super(leaf);
@@ -84,11 +88,25 @@ export class LocalGraphListView extends ItemView {
   }
 
   render(): void {
+    void this.renderAsync();
+  }
+
+  private async renderAsync(): Promise<void> {
+    const token = ++this.renderToken;
+    const file = this.getTargetFile();
+
+    // Mentions need the file's text, so gather them before touching the DOM.
+    // A newer render started while we waited wins.
+    let mentions: Mention[] = [];
+    if (file && this.plugin.settings.showMentions) {
+      mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
+      if (token !== this.renderToken) return;
+    }
+
     const { contentEl } = this;
     contentEl.empty();
     this.renderedPaths.clear();
 
-    const file = this.getTargetFile();
     this.renderHeader(contentEl, file);
 
     if (!file) {
@@ -102,23 +120,100 @@ export class LocalGraphListView extends ItemView {
     const groups = buildGroups(this.app, file, this.plugin.settings, proximity);
     const total = groups.reduce((sum, group) => sum + group.files.length, 0);
 
-    if (total === 0) {
+    if (total === 0 && mentions.length === 0) {
       contentEl.createDiv({ cls: "lgl-empty", text: "No linked notes." });
       return;
     }
 
-    for (const group of groups) {
-      if (group.files.length === 0) continue;
+    groups.forEach((group, groupIndex) => {
+      // Mentions are outbound candidates, so they ride with the first group,
+      // which is the flat list or Links to depending on the setting.
+      const ghosts = groupIndex === 0 ? mentions : [];
+      if (group.files.length === 0 && ghosts.length === 0) return;
 
       const header = contentEl.createDiv({ cls: "lgl-group-header" });
       header.createSpan({ cls: "lgl-group-label", text: group.label });
-      header.createSpan({ cls: "lgl-group-count", text: String(group.files.length) });
+      header.createSpan({
+        cls: "lgl-group-count",
+        text: ghosts.length
+          ? `${group.files.length} +${ghosts.length}`
+          : String(group.files.length),
+      });
 
       const list = contentEl.createDiv({ cls: "lgl-list" });
       group.files.forEach((neighbor, index) => {
         this.renderedPaths.add(neighbor.path);
         this.renderItem(list, neighbor, file, index + 1, proximity);
       });
+
+      ghosts.forEach((mention, index) => {
+        this.renderMention(list, mention, file, group.files.length + index + 1);
+      });
+    });
+  }
+
+  /**
+   * A note this one names but does not link yet. Rendered in the same list so
+   * accepting one just turns the row solid and lets it sort with the rest.
+   */
+  private renderMention(
+    parent: HTMLElement,
+    mention: Mention,
+    source: TFile,
+    index: number
+  ): void {
+    const item = parent.createDiv({ cls: "lgl-item lgl-ghost" });
+
+    if (this.plugin.settings.showIndex) {
+      item.createSpan({ cls: "lgl-index", text: `${index}.` });
+    }
+
+    const title = item.createEl("a", {
+      cls: "lgl-title internal-link",
+      text: mention.file.basename,
+      href: mention.file.path,
+    });
+
+    title.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      this.app.workspace.openLinkText(
+        mention.file.path,
+        source.path,
+        Keymap.isModEvent(evt)
+      );
+    });
+
+    title.addEventListener("mouseover", (evt) => {
+      this.app.workspace.trigger("hover-link", {
+        event: evt,
+        source: VIEW_TYPE_LOCAL_GRAPH_LIST,
+        hoverParent: this,
+        targetEl: title,
+        linktext: mention.file.path,
+        sourcePath: source.path,
+      });
+    });
+
+    const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
+    setIcon(accept, "link");
+    accept.setAttribute("aria-label", `Link "${mention.name}"`);
+    accept.addEventListener("click", async (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      if (await linkMention(this.app, source, mention)) this.render();
+    });
+
+    const propsEl = item.createDiv({ cls: "lgl-props" });
+    const row = propsEl.createDiv({ cls: "lgl-prop" });
+    const values = row.createDiv({ cls: "lgl-prop-values" });
+
+    values.createSpan({
+      cls: "lgl-value lgl-mention-count",
+      text: mention.count === 1 ? "1 mention" : `${mention.count} mentions`,
+    });
+
+    if (mention.name !== mention.file.basename) {
+      values.createSpan({ cls: "lgl-value lgl-pill", text: mention.name });
     }
   }
 

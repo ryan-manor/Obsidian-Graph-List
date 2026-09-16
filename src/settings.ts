@@ -30,6 +30,8 @@ export interface LocalGraphListSettings {
   showIndex: boolean;
   /** Include non-note links (images, PDFs, other attachments). */
   includeAttachments: boolean;
+  /** Append unlinked outbound mentions as ghost rows. */
+  showMentions: boolean;
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
@@ -41,6 +43,7 @@ export const DEFAULT_SETTINGS: LocalGraphListSettings = {
   showPropertyNames: false,
   showIndex: true,
   includeAttachments: false,
+  showMentions: true,
 };
 
 /** Pseudo-properties read off the file itself rather than frontmatter. */
@@ -203,6 +206,20 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showIndex)
           .onChange(async (value) => {
             this.plugin.settings.showIndex = value;
+            await this.commit();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show unlinked mentions")
+      .setDesc(
+        "Append notes this one names but does not link, as ghost rows with a link button"
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showMentions)
+          .onChange(async (value) => {
+            this.plugin.settings.showMentions = value;
             await this.commit();
           })
       );
