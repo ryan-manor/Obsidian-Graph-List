@@ -27,8 +27,9 @@ var import_obsidian4 = require("obsidian");
 // src/settings.ts
 var import_obsidian = require("obsidian");
 var SORT_PROPERTY = "sort";
+var PROXIMITY_PROPERTY = "proximity";
 var DEFAULT_SETTINGS = {
-  sortKey: "property",
+  sortKey: "proximity",
   sortProperty: "created",
   sortDirection: "desc",
   separateDirections: true,
@@ -51,6 +52,7 @@ function getAllPropertyKeys(app) {
   var _a, _b;
   const keys = new Set(FILE_PROPERTIES);
   keys.add(SORT_PROPERTY);
+  keys.add(PROXIMITY_PROPERTY);
   const registry = (_a = app.metadataTypeManager) == null ? void 0 : _a.properties;
   if (registry && typeof registry === "object") {
     for (const name of Object.keys(registry)) keys.add(name);
@@ -95,6 +97,7 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
     new import_obsidian.Setting(containerEl).setName("Sort").setHeading();
     new import_obsidian.Setting(containerEl).setName("Sort by").addDropdown(
       (dropdown) => dropdown.addOptions({
+        proximity: "Graph proximity",
         created: "Created time",
         modified: "Modified time",
         property: "Property",
@@ -148,7 +151,7 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
       })
     );
     new import_obsidian.Setting(containerEl).setName("Properties").setDesc(
-      `Shown under each title, in this order. Empty values are skipped. "${SORT_PROPERTY}" tracks whatever you sort by.`
+      `Shown under each title, in this order. Empty values are skipped. "${SORT_PROPERTY}" tracks whatever you sort by; "${PROXIMITY_PROPERTY}" is the graph score.`
     ).addButton(
       (button) => button.setIcon("plus").setTooltip("Add property").onClick(async () => {
         this.plugin.settings.properties.push("");
@@ -234,7 +237,7 @@ function collectNeighbors(app, file, settings) {
   };
   return { out: toFiles(outPaths), in: toFiles(inPaths) };
 }
-function buildGroups(app, file, settings) {
+function buildGroups(app, file, settings, proximity) {
   const { out, in: inbound } = collectNeighbors(app, file, settings);
   if (!settings.separateDirections) {
     const seen = /* @__PURE__ */ new Set();
@@ -244,15 +247,19 @@ function buildGroups(app, file, settings) {
       seen.add(neighbor.path);
       merged.push(neighbor);
     }
-    return [{ label: "Linked notes", files: sortFiles(app, merged, settings) }];
+    return [
+      { label: "Linked notes", files: sortFiles(app, merged, settings, proximity) }
+    ];
   }
   return [
-    { label: "Links to", files: sortFiles(app, out, settings) },
-    { label: "Linked from", files: sortFiles(app, inbound, settings) }
+    { label: "Links to", files: sortFiles(app, out, settings, proximity) },
+    { label: "Linked from", files: sortFiles(app, inbound, settings, proximity) }
   ];
 }
 function resolveSortProperty(settings) {
   switch (settings.sortKey) {
+    case "proximity":
+      return PROXIMITY_PROPERTY;
     case "created":
       return "file.ctime";
     case "modified":
@@ -307,8 +314,11 @@ function toComparable(value) {
   }
   return null;
 }
-function sortValue(app, file, settings) {
+function sortValue(app, file, settings, proximity) {
+  var _a;
   switch (settings.sortKey) {
+    case "proximity":
+      return (_a = proximity.get(file.path)) != null ? _a : null;
     case "created":
       return file.stat.ctime;
     case "modified":
@@ -319,9 +329,12 @@ function sortValue(app, file, settings) {
       return toComparable(getPropertyValue(app, file, settings.sortProperty));
   }
 }
-function sortFiles(app, files, settings) {
+function sortFiles(app, files, settings, proximity = /* @__PURE__ */ new Map()) {
   const sign = settings.sortDirection === "asc" ? 1 : -1;
-  const keyed = files.map((file) => ({ file, value: sortValue(app, file, settings) }));
+  const keyed = files.map((file) => ({
+    file,
+    value: sortValue(app, file, settings, proximity)
+  }));
   keyed.sort((a, b) => {
     if (a.value === null || b.value === null) {
       if (a.value === b.value) return a.file.basename.localeCompare(b.file.basename);
@@ -335,9 +348,113 @@ function sortFiles(app, files, settings) {
   return keyed.map((entry) => entry.file);
 }
 
+// src/ppr.ts
+var PPR_ALPHA = 0.15;
+var PPR_EPS = 1e-4;
+function buildAdjacency(resolvedLinks) {
+  const adj = /* @__PURE__ */ new Map();
+  const ensure = (path) => {
+    let set = adj.get(path);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      adj.set(path, set);
+    }
+    return set;
+  };
+  for (const source in resolvedLinks) {
+    const sourceSet = ensure(source);
+    for (const target in resolvedLinks[source]) {
+      if (target === source) continue;
+      sourceSet.add(target);
+      ensure(target).add(source);
+    }
+  }
+  return adj;
+}
+function pushPPR(adj, source, alpha = PPR_ALPHA, eps = PPR_EPS) {
+  var _a, _b, _c, _d;
+  const mass = /* @__PURE__ */ new Map();
+  const residual = /* @__PURE__ */ new Map([[source, 1]]);
+  const queue = [source];
+  const queued = /* @__PURE__ */ new Set([source]);
+  const degree = (node) => {
+    var _a2, _b2;
+    return (_b2 = (_a2 = adj.get(node)) == null ? void 0 : _a2.size) != null ? _b2 : 0;
+  };
+  while (queue.length > 0) {
+    const u = queue.pop();
+    queued.delete(u);
+    const ru = (_a = residual.get(u)) != null ? _a : 0;
+    const du = degree(u);
+    if (du === 0) {
+      mass.set(u, ((_b = mass.get(u)) != null ? _b : 0) + ru);
+      residual.set(u, 0);
+      continue;
+    }
+    if (ru / du < eps) continue;
+    mass.set(u, ((_c = mass.get(u)) != null ? _c : 0) + alpha * ru);
+    const spread = (1 - alpha) * ru / du;
+    residual.set(u, 0);
+    for (const v of adj.get(u)) {
+      const rv = ((_d = residual.get(v)) != null ? _d : 0) + spread;
+      residual.set(v, rv);
+      const dv = degree(v);
+      if (!queued.has(v) && dv > 0 && rv / dv >= eps) {
+        queue.push(v);
+        queued.add(v);
+      }
+    }
+  }
+  return mass;
+}
+function adamicAdar(adj, source) {
+  var _a, _b, _c;
+  const aa = /* @__PURE__ */ new Map();
+  const neighbors = adj.get(source);
+  if (!neighbors) return aa;
+  for (const z of neighbors) {
+    const dz = (_b = (_a = adj.get(z)) == null ? void 0 : _a.size) != null ? _b : 0;
+    const weight = dz > 1 ? 1 / Math.log(dz) : 0;
+    if (weight === 0) continue;
+    for (const v of adj.get(z)) {
+      if (v === source) continue;
+      aa.set(v, ((_c = aa.get(v)) != null ? _c : 0) + weight);
+    }
+  }
+  return aa;
+}
+var PPR_TIEBREAK = 1e-3;
+function proximityScores(adj, source) {
+  var _a, _b;
+  const aa = adamicAdar(adj, source);
+  const mass = pushPPR(adj, source);
+  let aaMax = 0;
+  for (const [path, score] of aa) {
+    if (path !== source && score > aaMax) aaMax = score;
+  }
+  let pprMax = 0;
+  for (const [path, m] of mass) {
+    if (path !== source && m > pprMax) pprMax = m;
+  }
+  const scores = /* @__PURE__ */ new Map();
+  if (pprMax <= 0 && aaMax <= 0) return scores;
+  const paths = /* @__PURE__ */ new Set([...aa.keys(), ...mass.keys()]);
+  for (const path of paths) {
+    if (path === source) continue;
+    const near = pprMax > 0 ? ((_a = mass.get(path)) != null ? _a : 0) / pprMax : 0;
+    if (aaMax <= 0) {
+      if (near > 0) scores.set(path, near);
+      continue;
+    }
+    scores.set(path, ((_b = aa.get(path)) != null ? _b : 0) / aaMax + PPR_TIEBREAK * near);
+  }
+  return scores;
+}
+
 // src/view.ts
 var VIEW_TYPE_LOCAL_GRAPH_LIST = "local-graph-list";
 var SORT_LABELS = {
+  proximity: "Graph proximity",
   created: "Created time",
   modified: "Modified time",
   property: "Property",
@@ -399,7 +516,8 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       return;
     }
     this.renderedPaths.add(file.path);
-    const groups = buildGroups(this.app, file, this.plugin.settings);
+    const proximity = proximityScores(this.plugin.getAdjacency(), file.path);
+    const groups = buildGroups(this.app, file, this.plugin.settings, proximity);
     const total = groups.reduce((sum, group) => sum + group.files.length, 0);
     if (total === 0) {
       contentEl.createDiv({ cls: "lgl-empty", text: "No linked notes." });
@@ -413,7 +531,7 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       const list = contentEl.createDiv({ cls: "lgl-list" });
       group.files.forEach((neighbor, index) => {
         this.renderedPaths.add(neighbor.path);
-        this.renderItem(list, neighbor, file, index + 1);
+        this.renderItem(list, neighbor, file, index + 1, proximity);
       });
     }
   }
@@ -462,7 +580,8 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     );
     menu.showAtMouseEvent(evt);
   }
-  renderItem(parent, file, source, index) {
+  renderItem(parent, file, source, index, proximity) {
+    var _a;
     const item = parent.createDiv({ cls: "lgl-item" });
     if (this.plugin.settings.showIndex) {
       item.createSpan({ cls: "lgl-index", text: `${index}.` });
@@ -497,7 +616,7 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     for (const prop of props) {
       const key = prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
       if (!key) continue;
-      const value = normalizeTags(key, getPropertyValue(this.app, file, key));
+      const value = key === PROXIMITY_PROPERTY ? (_a = proximity.get(file.path)) == null ? void 0 : _a.toFixed(2) : normalizeTags(key, getPropertyValue(this.app, file, key));
       const row = propsEl.createDiv({ cls: "lgl-prop" });
       if (this.plugin.settings.showPropertyNames) {
         row.createSpan({ cls: "lgl-prop-name", text: key });
@@ -582,6 +701,8 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
+    /** Whole-vault adjacency, rebuilt only when links actually change. */
+    this.adjacency = null;
   }
   async onload() {
     await this.loadSettings();
@@ -595,6 +716,11 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       name: "Open local graph list",
       callback: () => this.activateView()
     });
+    this.registerEvent(
+      this.app.metadataCache.on("resolved", () => {
+        this.adjacency = null;
+      })
+    );
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));
   }
   onunload() {
@@ -609,6 +735,13 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       await (leaf == null ? void 0 : leaf.setViewState({ type: VIEW_TYPE_LOCAL_GRAPH_LIST, active: true }));
     }
     if (leaf) await workspace.revealLeaf(leaf);
+  }
+  /** Undirected vault link graph, cached until the metadata cache resolves again. */
+  getAdjacency() {
+    if (!this.adjacency) {
+      this.adjacency = buildAdjacency(this.app.metadataCache.resolvedLinks);
+    }
+    return this.adjacency;
   }
   /** Re-render every open instance after a settings change. */
   refreshViews() {

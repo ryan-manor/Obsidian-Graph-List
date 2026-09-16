@@ -5,9 +5,13 @@ import {
   LocalGraphListSettings,
 } from "./settings";
 import { LocalGraphListView, VIEW_TYPE_LOCAL_GRAPH_LIST } from "./view";
+import { buildAdjacency, type AdjMap } from "./ppr";
 
 export default class LocalGraphListPlugin extends Plugin {
   settings: LocalGraphListSettings = DEFAULT_SETTINGS;
+
+  /** Whole-vault adjacency, rebuilt only when links actually change. */
+  private adjacency: AdjMap | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -24,6 +28,12 @@ export default class LocalGraphListPlugin extends Plugin {
       name: "Open local graph list",
       callback: () => this.activateView(),
     });
+
+    this.registerEvent(
+      this.app.metadataCache.on("resolved", () => {
+        this.adjacency = null;
+      })
+    );
 
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));
   }
@@ -45,6 +55,14 @@ export default class LocalGraphListPlugin extends Plugin {
     }
 
     if (leaf) await workspace.revealLeaf(leaf);
+  }
+
+  /** Undirected vault link graph, cached until the metadata cache resolves again. */
+  getAdjacency(): AdjMap {
+    if (!this.adjacency) {
+      this.adjacency = buildAdjacency(this.app.metadataCache.resolvedLinks);
+    }
+    return this.adjacency;
   }
 
   /** Re-render every open instance after a settings change. */

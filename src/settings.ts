@@ -4,7 +4,15 @@ import type LocalGraphListPlugin from "./main";
 /** Display key that follows whatever the list is sorted by. */
 export const SORT_PROPERTY = "sort";
 
-export type SortKey = "created" | "modified" | "property" | "title";
+/** Display key for the graph-proximity score. */
+export const PROXIMITY_PROPERTY = "proximity";
+
+export type SortKey =
+  | "proximity"
+  | "created"
+  | "modified"
+  | "property"
+  | "title";
 export type SortDirection = "asc" | "desc";
 
 export interface LocalGraphListSettings {
@@ -25,7 +33,7 @@ export interface LocalGraphListSettings {
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
-  sortKey: "property",
+  sortKey: "proximity",
   sortProperty: "created",
   sortDirection: "desc",
   separateDirections: true,
@@ -54,6 +62,7 @@ export const FILE_PROPERTIES = [
 export function getAllPropertyKeys(app: App): string[] {
   const keys = new Set<string>(FILE_PROPERTIES);
   keys.add(SORT_PROPERTY);
+  keys.add(PROXIMITY_PROPERTY);
 
   const registry = (app as any).metadataTypeManager?.properties;
   if (registry && typeof registry === "object") {
@@ -118,6 +127,7 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
       .addDropdown((dropdown) =>
         dropdown
           .addOptions({
+            proximity: "Graph proximity",
             created: "Created time",
             modified: "Modified time",
             property: "Property",
@@ -212,7 +222,8 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Properties")
       .setDesc(
-        `Shown under each title, in this order. Empty values are skipped. "${SORT_PROPERTY}" tracks whatever you sort by.`
+        `Shown under each title, in this order. Empty values are skipped. ` +
+          `"${SORT_PROPERTY}" tracks whatever you sort by; "${PROXIMITY_PROPERTY}" is the graph score.`
       )
       .addButton((button) =>
         button

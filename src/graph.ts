@@ -1,5 +1,5 @@
 import { App, TFile, getAllTags } from "obsidian";
-import type { LocalGraphListSettings } from "./settings";
+import { PROXIMITY_PROPERTY, type LocalGraphListSettings } from "./settings";
 
 export type Direction = "out" | "in";
 
@@ -47,7 +47,8 @@ export function collectNeighbors(
 export function buildGroups(
   app: App,
   file: TFile,
-  settings: LocalGraphListSettings
+  settings: LocalGraphListSettings,
+  proximity: Map<string, number>
 ): LinkGroup[] {
   const { out, in: inbound } = collectNeighbors(app, file, settings);
 
@@ -59,12 +60,14 @@ export function buildGroups(
       seen.add(neighbor.path);
       merged.push(neighbor);
     }
-    return [{ label: "Linked notes", files: sortFiles(app, merged, settings) }];
+    return [
+      { label: "Linked notes", files: sortFiles(app, merged, settings, proximity) },
+    ];
   }
 
   return [
-    { label: "Links to", files: sortFiles(app, out, settings) },
-    { label: "Linked from", files: sortFiles(app, inbound, settings) },
+    { label: "Links to", files: sortFiles(app, out, settings, proximity) },
+    { label: "Linked from", files: sortFiles(app, inbound, settings, proximity) },
   ];
 }
 
@@ -75,6 +78,8 @@ export function buildGroups(
  */
 export function resolveSortProperty(settings: LocalGraphListSettings): string | null {
   switch (settings.sortKey) {
+    case "proximity":
+      return PROXIMITY_PROPERTY;
     case "created":
       return "file.ctime";
     case "modified":
@@ -145,9 +150,12 @@ function toComparable(value: unknown): number | string | null {
 function sortValue(
   app: App,
   file: TFile,
-  settings: LocalGraphListSettings
+  settings: LocalGraphListSettings,
+  proximity: Map<string, number>
 ): number | string | null {
   switch (settings.sortKey) {
+    case "proximity":
+      return proximity.get(file.path) ?? null;
     case "created":
       return file.stat.ctime;
     case "modified":
@@ -163,11 +171,15 @@ function sortValue(
 export function sortFiles(
   app: App,
   files: TFile[],
-  settings: LocalGraphListSettings
+  settings: LocalGraphListSettings,
+  proximity: Map<string, number> = new Map()
 ): TFile[] {
   const sign = settings.sortDirection === "asc" ? 1 : -1;
 
-  const keyed = files.map((file) => ({ file, value: sortValue(app, file, settings) }));
+  const keyed = files.map((file) => ({
+    file,
+    value: sortValue(app, file, settings, proximity),
+  }));
 
   keyed.sort((a, b) => {
     if (a.value === null || b.value === null) {

@@ -9,11 +9,13 @@ import {
 } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 import { buildGroups, getPropertyValue, resolveSortProperty, unwrapLink } from "./graph";
-import { SORT_PROPERTY, type SortKey } from "./settings";
+import { PROXIMITY_PROPERTY, SORT_PROPERTY, type SortKey } from "./settings";
+import { proximityScores } from "./ppr";
 
 export const VIEW_TYPE_LOCAL_GRAPH_LIST = "local-graph-list";
 
 const SORT_LABELS: Record<SortKey, string> = {
+  proximity: "Graph proximity",
   created: "Created time",
   modified: "Modified time",
   property: "Property",
@@ -96,7 +98,8 @@ export class LocalGraphListView extends ItemView {
 
     this.renderedPaths.add(file.path);
 
-    const groups = buildGroups(this.app, file, this.plugin.settings);
+    const proximity = proximityScores(this.plugin.getAdjacency(), file.path);
+    const groups = buildGroups(this.app, file, this.plugin.settings, proximity);
     const total = groups.reduce((sum, group) => sum + group.files.length, 0);
 
     if (total === 0) {
@@ -114,7 +117,7 @@ export class LocalGraphListView extends ItemView {
       const list = contentEl.createDiv({ cls: "lgl-list" });
       group.files.forEach((neighbor, index) => {
         this.renderedPaths.add(neighbor.path);
-        this.renderItem(list, neighbor, file, index + 1);
+        this.renderItem(list, neighbor, file, index + 1, proximity);
       });
     }
   }
@@ -189,7 +192,8 @@ export class LocalGraphListView extends ItemView {
     parent: HTMLElement,
     file: TFile,
     source: TFile,
-    index: number
+    index: number,
+    proximity: Map<string, number>
   ): void {
     const item = parent.createDiv({ cls: "lgl-item" });
 
@@ -235,7 +239,10 @@ export class LocalGraphListView extends ItemView {
         prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
       if (!key) continue;
 
-      const value = normalizeTags(key, getPropertyValue(this.app, file, key));
+      const value =
+        key === PROXIMITY_PROPERTY
+          ? proximity.get(file.path)?.toFixed(2)
+          : normalizeTags(key, getPropertyValue(this.app, file, key));
       const row = propsEl.createDiv({ cls: "lgl-prop" });
 
       if (this.plugin.settings.showPropertyNames) {
