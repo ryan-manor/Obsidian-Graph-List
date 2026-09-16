@@ -8,8 +8,8 @@ import {
   setIcon,
 } from "obsidian";
 import type LocalGraphListPlugin from "./main";
-import { buildGroups, getPropertyValue, unwrapLink } from "./graph";
-import type { SortKey } from "./settings";
+import { buildGroups, getPropertyValue, resolveSortProperty, unwrapLink } from "./graph";
+import { SORT_PROPERTY, type SortKey } from "./settings";
 
 export const VIEW_TYPE_LOCAL_GRAPH_LIST = "local-graph-list";
 
@@ -230,7 +230,11 @@ export class LocalGraphListView extends ItemView {
 
     const propsEl = item.createDiv({ cls: "lgl-props" });
 
-    for (const key of props) {
+    for (const prop of props) {
+      const key =
+        prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
+      if (!key) continue;
+
       const value = normalizeTags(key, getPropertyValue(this.app, file, key));
       const row = propsEl.createDiv({ cls: "lgl-prop" });
 

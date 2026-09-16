@@ -26,12 +26,13 @@ var import_obsidian4 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
+var SORT_PROPERTY = "sort";
 var DEFAULT_SETTINGS = {
-  sortKey: "modified",
+  sortKey: "property",
   sortProperty: "created",
   sortDirection: "desc",
   separateDirections: true,
-  properties: ["file.mtime", "tags"],
+  properties: [SORT_PROPERTY, "tags"],
   showPropertyNames: false,
   showIndex: true,
   includeAttachments: false
@@ -49,6 +50,7 @@ var FILE_PROPERTIES = [
 function getAllPropertyKeys(app) {
   var _a, _b;
   const keys = new Set(FILE_PROPERTIES);
+  keys.add(SORT_PROPERTY);
   const registry = (_a = app.metadataTypeManager) == null ? void 0 : _a.properties;
   if (registry && typeof registry === "object") {
     for (const name of Object.keys(registry)) keys.add(name);
@@ -145,7 +147,9 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.commit();
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Properties").setDesc("Shown under each title, in this order. Empty values are skipped.").addButton(
+    new import_obsidian.Setting(containerEl).setName("Properties").setDesc(
+      `Shown under each title, in this order. Empty values are skipped. "${SORT_PROPERTY}" tracks whatever you sort by.`
+    ).addButton(
       (button) => button.setIcon("plus").setTooltip("Add property").onClick(async () => {
         this.plugin.settings.properties.push("");
         await this.commit();
@@ -246,6 +250,18 @@ function buildGroups(app, file, settings) {
     { label: "Links to", files: sortFiles(app, out, settings) },
     { label: "Linked from", files: sortFiles(app, inbound, settings) }
   ];
+}
+function resolveSortProperty(settings) {
+  switch (settings.sortKey) {
+    case "created":
+      return "file.ctime";
+    case "modified":
+      return "file.mtime";
+    case "property":
+      return settings.sortProperty || null;
+    case "title":
+      return null;
+  }
 }
 function getPropertyValue(app, file, key) {
   var _a, _b, _c, _d, _e, _f;
@@ -478,7 +494,9 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     const props = this.plugin.settings.properties.filter(Boolean);
     if (props.length === 0) return;
     const propsEl = item.createDiv({ cls: "lgl-props" });
-    for (const key of props) {
+    for (const prop of props) {
+      const key = prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
+      if (!key) continue;
       const value = normalizeTags(key, getPropertyValue(this.app, file, key));
       const row = propsEl.createDiv({ cls: "lgl-prop" });
       if (this.plugin.settings.showPropertyNames) {

@@ -14,6 +14,9 @@ underneath.
   split off for one flat, de-duplicated list.
 - Any frontmatter property under each title. Empty values are skipped, so rows
   stay tight.
+- `sort`, a pseudo-property that always shows the value the list is ordered by,
+  so the date on the row is the date it sorted on. It follows the sort setting,
+  including changes made from the view header.
 - `file.*` pseudo-properties: `file.name`, `file.path`, `file.folder`,
   `file.ext`, `file.ctime`, `file.mtime`, `file.size`, `file.tags`.
 - Tags as clickable pills, wikilink values as working links.
@@ -28,7 +31,7 @@ sort control in the view header writes to the same settings.
 | Sort by | Created time, modified time, a property, or title |
 | Sort direction | Ascending / descending. Notes missing the sort value always land last |
 | Separate inbound and outbound | Two groups, or one flat list |
-| Properties | Which properties appear, in which order |
+| Properties | Which properties appear, in which order. `sort` tracks the sort key |
 | Show property names | Label each value with its key |
 | Number rows | Running count beside each title |
 | Include attachments | Show linked images and PDFs alongside notes |

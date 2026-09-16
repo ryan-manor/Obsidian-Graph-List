@@ -69,6 +69,24 @@ export function buildGroups(
 }
 
 /**
+ * The concrete property key behind the `sort` pseudo-property, so the value on
+ * display is always the one the list is ordered by. Null when sorting by title,
+ * which the row already shows.
+ */
+export function resolveSortProperty(settings: LocalGraphListSettings): string | null {
+  switch (settings.sortKey) {
+    case "created":
+      return "file.ctime";
+    case "modified":
+      return "file.mtime";
+    case "property":
+      return settings.sortProperty || null;
+    case "title":
+      return null;
+  }
+}
+
+/**
  * Value of a property for a file. Handles `file.*` pseudo-properties, which
  * read the file itself rather than frontmatter.
  */

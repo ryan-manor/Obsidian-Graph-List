@@ -1,6 +1,9 @@
 import { AbstractInputSuggest, App, PluginSettingTab, Setting } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 
+/** Display key that follows whatever the list is sorted by. */
+export const SORT_PROPERTY = "sort";
+
 export type SortKey = "created" | "modified" | "property" | "title";
 export type SortDirection = "asc" | "desc";
 
@@ -22,11 +25,11 @@ export interface LocalGraphListSettings {
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
-  sortKey: "modified",
+  sortKey: "property",
   sortProperty: "created",
   sortDirection: "desc",
   separateDirections: true,
-  properties: ["file.mtime", "tags"],
+  properties: [SORT_PROPERTY, "tags"],
   showPropertyNames: false,
   showIndex: true,
   includeAttachments: false,
@@ -50,6 +53,7 @@ export const FILE_PROPERTIES = [
  */
 export function getAllPropertyKeys(app: App): string[] {
   const keys = new Set<string>(FILE_PROPERTIES);
+  keys.add(SORT_PROPERTY);
 
   const registry = (app as any).metadataTypeManager?.properties;
   if (registry && typeof registry === "object") {
@@ -207,7 +211,9 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Properties")
-      .setDesc("Shown under each title, in this order. Empty values are skipped.")
+      .setDesc(
+        `Shown under each title, in this order. Empty values are skipped. "${SORT_PROPERTY}" tracks whatever you sort by.`
+      )
       .addButton((button) =>
         button
           .setIcon("plus")
