@@ -84,6 +84,8 @@ across 3 survive here. The filtering is structural, not a ranking:
 - Targets this note already links are dropped, so a note linked once does not keep
   suggesting itself for every other time it appears.
 - One row per target rather than per occurrence, with all occurrences counted.
+- Notes under Obsidian's "Excluded files" setting are never suggested, matching what
+  its own link suggester does. Links you already made to them still show.
 What survives that is either specific enough to be right or ambiguous in a way only
 meaning can settle, for example "ACL" meaning Andersen-Chung-Lang in a note about
 PageRank rather than the Adobe Context Layer wiki. Proximity does not help there:

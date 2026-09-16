@@ -468,10 +468,12 @@ function buildMentionIndex(app) {
   var _a, _b, _c, _d, _e;
   const index = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Set();
+  const ignored = makeIgnoreTest(app);
   const suggestions = (_c = (_b = (_a = app.metadataCache).getLinkSuggestions) == null ? void 0 : _b.call(_a)) != null ? _c : [];
   for (const suggestion of suggestions) {
     const file = suggestion.file;
     if (!file || file.extension !== "md") continue;
+    if (ignored(file.path)) continue;
     const name = (_d = suggestion.alias) != null ? _d : file.basename;
     if (name.length < MIN_NAME_LENGTH) continue;
     const key = `${file.path}\0${name}`;
@@ -486,6 +488,33 @@ function buildMentionIndex(app) {
     else index.set(first, [candidate]);
   }
   return index;
+}
+function makeIgnoreTest(app) {
+  var _a, _b;
+  const cache = app.metadataCache;
+  if (typeof cache.isUserIgnored === "function") {
+    return (path) => {
+      var _a2, _b2;
+      return (_b2 = (_a2 = cache.isUserIgnored) == null ? void 0 : _a2.call(cache, path)) != null ? _b2 : false;
+    };
+  }
+  const config = (_b = (_a = app.vault).getConfig) == null ? void 0 : _b.call(_a, "userIgnoreFilters");
+  const filters = Array.isArray(config) ? config : [];
+  if (filters.length === 0) return () => false;
+  const tests = filters.map((filter) => {
+    const pattern = filter.match(/^\/(.*)\/$/);
+    if (pattern) {
+      try {
+        const expression = new RegExp(pattern[1], "i");
+        return (path) => expression.test(path);
+      } catch (e) {
+        return () => false;
+      }
+    }
+    const fragment = filter.toLowerCase();
+    return (path) => path.toLowerCase().includes(fragment);
+  });
+  return (path) => tests.some((test) => test(path));
 }
 async function findUnlinkedMentions(app, file, index) {
   var _a, _b;
