@@ -381,9 +381,10 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Auto-link new mentions")
       .setDesc(
-        "When you mention a note this one already links, link it on the next save. " +
-          "Skips the line you are typing on. Undoing an auto-link turns it off for that note " +
-          "until Obsidian restarts. Notes you have never linked are only ever suggested."
+        "Links mentions you write from here on, for notes this one already links. " +
+          "Mentions already in the note are left alone, the line you are typing on is skipped, " +
+          "and names under four characters are never written unprompted. Removing one of its " +
+          "links, or one of your own, stops it for that note until the plugin reloads."
       )
       .addToggle((toggle) =>
         toggle.setValue(settings.autoLink).onChange(async (value) => {

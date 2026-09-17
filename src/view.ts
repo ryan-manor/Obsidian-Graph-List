@@ -2,6 +2,7 @@ import {
   ItemView,
   Keymap,
   Menu,
+  Notice,
   TFile,
   WorkspaceLeaf,
   debounce,
@@ -228,14 +229,28 @@ export class LocalGraphListView extends ItemView {
     accept.addEventListener("click", async (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
-      const linked = await linkMention(
-        this.app,
-        source,
-        mention.file,
-        this.plugin.getMentionIndex(),
-        scope
-      );
-      if (linked > 0) this.render();
+
+      // The rows outlive a file switch by the render debounce, so check the
+      // click is still for the note on screen before writing to it.
+      if (this.getTargetFile()?.path !== source.path) {
+        this.render();
+        return;
+      }
+
+      try {
+        const linked = await linkMention(
+          this.app,
+          source,
+          mention.file,
+          this.plugin.getMentionIndex(),
+          scope
+        );
+        if (linked === 0) new Notice(`No unlinked mention of "${mention.file.basename}" left.`);
+        this.render();
+      } catch (error) {
+        console.error("Local Graph List: linking failed", error);
+        new Notice(`Could not link "${mention.file.basename}".`);
+      }
     });
   }
 

@@ -80,14 +80,20 @@ The **Link** setting decides what the button converts:
 - **First mention** (default). Once a note is linked, its other mentions stay plain text.
 - **All mentions**. Every clean occurrence is linked. Mention a linked note again later and
   its row gets the button back with an "N unlinked mentions" count.
-- **Auto-link new mentions** (off by default, all mentions only). New mentions of notes
-  this one already links are linked on the next save. It never touches a note you have not
-  linked yourself, skips any line holding a cursor, and edits through the editor so one
-  undo reverts it. Undoing or deleting an auto-link stops it for that target in that note
-  until the plugin reloads.
+- **Auto-link new mentions** (off by default, all mentions only). Mentions you write from
+  then on are linked on the next save, for notes this one already links. It never touches a
+  note you have not linked yourself, never touches mentions that were already in the note
+  when it first saw it, skips any line holding a cursor, and ignores names shorter than
+  four characters, since two- and three-letter aliases are the ambiguous ones. Removing one
+  of its links, or one of your own, stops it for that note until the plugin reloads.
 
-The list, the button and auto-link run the same matcher on the current text, so they agree
-on what counts as a mention and an edit between render and click cannot misplace a link.
+The list, the button and auto-link run the same matcher over the same text, so they agree
+on what counts as a mention. Blocked ranges come from the text rather than the metadata
+cache for that reason: the button and auto-link work on text the cache has not parsed yet,
+where cache offsets would point at the wrong characters.
+
+When the note is open, the button edits through the editor, so its links land in one undo
+step and unsaved keystrokes cannot be lost.
 
 Matching is case-insensitive like Obsidian's own, so a lowercase "style" still nudges
 towards the Style page. What differs is everything around the match. Obsidian renders

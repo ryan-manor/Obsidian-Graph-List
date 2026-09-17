@@ -246,7 +246,7 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     if (settings.mentionScope !== "all") return;
     new import_obsidian.Setting(containerEl).setName("Auto-link new mentions").setDesc(
-      "When you mention a note this one already links, link it on the next save. Skips the line you are typing on. Undoing an auto-link turns it off for that note until Obsidian restarts. Notes you have never linked are only ever suggested."
+      "Links mentions you write from here on, for notes this one already links. Mentions already in the note are left alone, the line you are typing on is skipped, and names under four characters are never written unprompted. Removing one of its links, or one of your own, stops it for that note until the plugin reloads."
     ).addToggle(
       (toggle) => toggle.setValue(settings.autoLink).onChange(async (value) => {
         settings.autoLink = value;
@@ -558,13 +558,12 @@ function makeIgnoreTest(app) {
 async function findUnlinkedMentions(app, file, index) {
   if (file.extension !== "md") return [];
   const text = await app.vault.cachedRead(file);
-  const cache = app.metadataCache.getFileCache(file);
-  return scanMentions(app, file, text, blockedRanges(text, cache), index);
+  return scanMentions(app, file, text, blockedRanges(text), index);
 }
 function scanMentions(app, source, text, blocked, index) {
   var _a, _b;
   const linked = new Set(Object.keys((_a = app.metadataCache.resolvedLinks[source.path]) != null ? _a : {}));
-  const lower = text.toLowerCase();
+  const lower = toLowerKeepingOffsets(text);
   const words = new Set((_b = lower.match(WORD)) != null ? _b : []);
   const hits = [];
   for (const [first, candidates] of index) {
@@ -634,9 +633,69 @@ function findOccurrences(text, lower, candidate, blocked) {
   }
   return hits;
 }
+function toLowerKeepingOffsets(text) {
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) return lower;
+  let result = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const low = char.toLowerCase();
+    result += low.length === 1 ? low : char;
+  }
+  return result;
+}
+function blockRanges(text) {
+  const ranges = [];
+  const lines = text.split("\n");
+  const starts = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const endOf = (index) => starts[index] + lines[index].length;
+  let i = 0;
+  while (i < lines.length) {
+    const fence = lines[i].match(FENCE);
+    if (fence) {
+      const closing = new RegExp(`^ {0,3}${fence[1][0] === "`" ? "`" : "~"}{${fence[1].length},}\\s*$`);
+      let j = i + 1;
+      while (j < lines.length && !closing.test(lines[j])) j += 1;
+      ranges.push([starts[i], j < lines.length ? endOf(j) : text.length]);
+      i = j + 1;
+      continue;
+    }
+    if (HTML_BLOCK.test(lines[i])) {
+      let j = i;
+      while (j < lines.length && lines[j].trim() !== "") j += 1;
+      ranges.push([starts[i], endOf(j - 1)]);
+      i = j;
+      continue;
+    }
+    if (INDENTED.test(lines[i]) && startsIndentedCode(lines, i)) {
+      let j = i;
+      let last = i;
+      while (j < lines.length && (lines[j].trim() === "" || INDENTED.test(lines[j]))) {
+        if (lines[j].trim() !== "") last = j;
+        j += 1;
+      }
+      ranges.push([starts[i], endOf(last)]);
+      i = j;
+      continue;
+    }
+    i += 1;
+  }
+  return ranges;
+}
+function startsIndentedCode(lines, index) {
+  if (index > 0 && lines[index - 1].trim() !== "") return false;
+  for (let j = index - 2; j >= 0; j -= 1) {
+    if (lines[j].trim() === "") continue;
+    return !LIST_ITEM.test(lines[j]) && !INDENTED.test(lines[j]);
+  }
+  return true;
+}
 var BLOCKED_PATTERNS = [
-  /```[\s\S]*?(?:```|$)/g,
-  // fenced code
   /`[^`\n]*`/g,
   // inline code
   /\$\$[\s\S]*?(?:\$\$|$)/g,
@@ -656,19 +715,13 @@ var BLOCKED_PATTERNS = [
   /#[\p{L}\p{N}/_-]+/gu
   // tags
 ];
-var BLOCKED_SECTIONS = /* @__PURE__ */ new Set(["yaml", "code", "math", "html", "comment"]);
 var FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---/;
-function blockedRanges(text, cache) {
-  var _a, _b, _c;
-  const ranges = [];
-  for (const section of (_a = cache == null ? void 0 : cache.sections) != null ? _a : []) {
-    if (BLOCKED_SECTIONS.has(section.type)) {
-      ranges.push([section.position.start.offset, section.position.end.offset]);
-    }
-  }
-  for (const ref of [...(_b = cache == null ? void 0 : cache.links) != null ? _b : [], ...(_c = cache == null ? void 0 : cache.embeds) != null ? _c : []]) {
-    ranges.push([ref.position.start.offset, ref.position.end.offset]);
-  }
+var FENCE = /^ {0,3}(`{3,}|~{3,})/;
+var HTML_BLOCK = /^ {0,3}<[a-zA-Z!/]/;
+var INDENTED = /^(?: {4}|\t)/;
+var LIST_ITEM = /^ *(?:[-*+]|\d+[.)])\s/;
+function blockedRanges(text) {
+  const ranges = blockRanges(text);
   const frontmatter = text.match(FRONTMATTER);
   if (frontmatter) ranges.push([0, frontmatter[0].length]);
   for (const pattern of BLOCKED_PATTERNS) {
@@ -698,14 +751,17 @@ function isBlocked(ranges, start, end) {
   return false;
 }
 async function linkMention(app, source, target, index, scope) {
+  var _a;
+  const context = app.workspace.activeEditor;
+  const editor = ((_a = context == null ? void 0 : context.file) == null ? void 0 : _a.path) === source.path ? context.editor : null;
+  if (editor) return linkThroughEditor(app, source, target, index, scope, editor);
+  const preview = spansToConvert(app, source, await app.vault.cachedRead(source), target, index, scope);
+  if (preview.length === 0) return 0;
   let linked = 0;
   await app.vault.process(source, (data) => {
-    const mention = scanMentions(app, source, data, blockedRanges(data, null), index).find(
-      (entry) => entry.file.path === target.path
-    );
-    if (!mention) return data;
-    const spans = spansToLink(mention, scope);
+    const spans = spansToConvert(app, source, data, target, index, scope);
     linked = spans.length;
+    if (spans.length === 0) return data;
     let result = data;
     for (const span of [...spans].reverse()) {
       const link = linkForSpan(app, source, target, data, span);
@@ -714,6 +770,25 @@ async function linkMention(app, source, target, index, scope) {
     return result;
   });
   return linked;
+}
+function linkThroughEditor(app, source, target, index, scope, editor) {
+  const text = editor.getValue();
+  const spans = spansToConvert(app, source, text, target, index, scope);
+  if (spans.length === 0) return 0;
+  editor.transaction({
+    changes: spans.map((span) => ({
+      from: editor.offsetToPos(span.start),
+      to: editor.offsetToPos(span.end),
+      text: linkForSpan(app, source, target, text, span)
+    }))
+  });
+  return spans.length;
+}
+function spansToConvert(app, source, text, target, index, scope) {
+  const mention = scanMentions(app, source, text, blockedRanges(text), index).find(
+    (entry) => entry.file.path === target.path
+  );
+  return mention ? spansToLink(mention, scope) : [];
 }
 
 // src/view.ts
@@ -875,16 +950,27 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       scope === "all" && mention.count > 1 ? `Link all ${mention.count} mentions` : `Link "${(_b = (_a = mention.spans[0]) == null ? void 0 : _a.name) != null ? _b : mention.name}"`
     );
     accept.addEventListener("click", async (evt) => {
+      var _a2;
       evt.preventDefault();
       evt.stopPropagation();
-      const linked = await linkMention(
-        this.app,
-        source,
-        mention.file,
-        this.plugin.getMentionIndex(),
-        scope
-      );
-      if (linked > 0) this.render();
+      if (((_a2 = this.getTargetFile()) == null ? void 0 : _a2.path) !== source.path) {
+        this.render();
+        return;
+      }
+      try {
+        const linked = await linkMention(
+          this.app,
+          source,
+          mention.file,
+          this.plugin.getMentionIndex(),
+          scope
+        );
+        if (linked === 0) new import_obsidian3.Notice(`No unlinked mention of "${mention.file.basename}" left.`);
+        this.render();
+      } catch (error) {
+        console.error("Local Graph List: linking failed", error);
+        new import_obsidian3.Notice(`Could not link "${mention.file.basename}".`);
+      }
     });
   }
   /** Mention count, plus the alias that matched when it is not the title. */
@@ -1067,13 +1153,16 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
 };
 
 // src/autolink.ts
+var MIN_AUTO_NAME_LENGTH = 4;
 var AutoLinker = class {
   constructor(plugin) {
     this.plugin = plugin;
     /** Fewest links each auto-linked target should have, from the last auto-link on. */
     this.expected = /* @__PURE__ */ new Map();
-    /** Targets the user unlinked after an auto-link, per source note. */
+    /** Targets the user unlinked, per source note. */
     this.declined = /* @__PURE__ */ new Set();
+    /** Lines each note had when first scanned. Anything else was written since. */
+    this.baseline = /* @__PURE__ */ new Map();
   }
   /** Runs on the metadata cache's per-file `resolve`, when link counts are fresh. */
   onResolve(file) {
@@ -1088,11 +1177,17 @@ var AutoLinker = class {
     const counts = (_b = app.metadataCache.resolvedLinks[file.path]) != null ? _b : {};
     this.noteDeclines(file, counts);
     const text = editor.getValue();
+    const lines = new Set(text.split("\n"));
+    const known = this.baseline.get(file.path);
+    if (!known) {
+      this.baseline.set(file.path, lines);
+      return;
+    }
     const mentions = scanMentions(
       app,
       file,
       text,
-      blockedRanges(text, null),
+      blockedRanges(text),
       this.plugin.getMentionIndex()
     ).filter((mention) => mention.linked && !this.declined.has(key(file, mention.file)));
     if (mentions.length === 0) return;
@@ -1100,12 +1195,15 @@ var AutoLinker = class {
       Math.min(anchor.line, head.line),
       Math.max(anchor.line, head.line)
     ]);
+    const written = (line) => !known.has(editor.getLine(line));
     const changes = [];
     for (const mention of mentions) {
       let added = 0;
       for (const span of mention.spans) {
+        if (span.name.length < MIN_AUTO_NAME_LENGTH) continue;
         const from = editor.offsetToPos(span.start);
         if (busy.some(([first, last]) => from.line >= first && from.line <= last)) continue;
+        if (!written(from.line)) continue;
         changes.push({
           from,
           to: editor.offsetToPos(span.end),
@@ -1123,23 +1221,28 @@ var AutoLinker = class {
     if (changes.length > 0) editor.transaction({ changes });
   }
   /**
-   * A target that drops below the most links it has had since auto-link
-   * touched it was unlinked on purpose, whether by undo straight away or by
-   * deleting the link later. Only checked once the file has been written since
-   * the auto-link, so a resolve that still reflects the pre-edit text is not
-   * mistaken for one.
+   * A target whose link count drops was unlinked on purpose, whether by undo
+   * straight away or by deleting a link later. Every linked target is tracked,
+   * not just ones auto-link wrote, so removing a link you made by hand also
+   * counts as intent. A count recorded right after an auto-link is only
+   * trusted once the file has been written since, so a resolve that still
+   * reflects the pre-edit text is not mistaken for a deletion.
    */
   noteDeclines(file, counts) {
-    var _a;
     const prefix = `${file.path}\0`;
-    for (const [id, expected] of this.expected) {
-      if (!id.startsWith(prefix) || file.stat.mtime <= expected.at) continue;
-      const actual = (_a = counts[id.slice(prefix.length)]) != null ? _a : 0;
-      if (actual < expected.count) {
+    for (const target of Object.keys(counts)) {
+      const id = prefix + target;
+      const expected = this.expected.get(id);
+      if (!expected) {
+        this.expected.set(id, { count: counts[target], at: 0 });
+        continue;
+      }
+      if (expected.at > 0 && file.stat.mtime <= expected.at) continue;
+      if (counts[target] < expected.count) {
         this.declined.add(id);
         this.expected.delete(id);
       } else {
-        expected.count = actual;
+        this.expected.set(id, { count: counts[target], at: 0 });
       }
     }
   }

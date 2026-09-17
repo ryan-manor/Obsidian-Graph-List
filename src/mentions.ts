@@ -1,4 +1,4 @@
-import { App, CachedMetadata, TFile } from "obsidian";
+import { App, Editor, TFile } from "obsidian";
 
 /**
  * Outbound unlinked mentions: text in this note that names another note but
@@ -160,8 +160,7 @@ export async function findUnlinkedMentions(
   if (file.extension !== "md") return [];
 
   const text = await app.vault.cachedRead(file);
-  const cache = app.metadataCache.getFileCache(file);
-  return scanMentions(app, file, text, blockedRanges(text, cache), index);
+  return scanMentions(app, file, text, blockedRanges(text), index);
 }
 
 /**
@@ -178,7 +177,7 @@ export function scanMentions(
   index: MentionIndex
 ): Mention[] {
   const linked = new Set(Object.keys(app.metadataCache.resolvedLinks[source.path] ?? {}));
-  const lower = text.toLowerCase();
+  const lower = toLowerKeepingOffsets(text);
   const words = new Set(lower.match(WORD) ?? []);
 
   const hits: Hit[] = [];
@@ -307,9 +306,98 @@ function findOccurrences(
 
 export type Range = [number, number];
 
-/** Text where a mention is not a mention, and where linking would break formatting. */
+/**
+ * Lowercase without moving any offset. `"\u0130".toLowerCase()` is two code
+ * units, which would shift every offset after it and silently kill matching
+ * for the rest of the note.
+ */
+function toLowerKeepingOffsets(text: string): string {
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) return lower;
+
+  let result = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const low = char.toLowerCase();
+    result += low.length === 1 ? low : char;
+  }
+  return result;
+}
+
+/**
+ * Block-level regions: fenced code of either marker, raw HTML blocks, and
+ * indented code. These are what the metadata cache used to supply, found from
+ * the text instead so they hold for unsaved text too.
+ */
+function blockRanges(text: string): Range[] {
+  const ranges: Range[] = [];
+  const lines = text.split("\n");
+
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const endOf = (index: number) => starts[index] + lines[index].length;
+
+  let i = 0;
+  while (i < lines.length) {
+    const fence = lines[i].match(FENCE);
+    if (fence) {
+      const closing = new RegExp(`^ {0,3}${fence[1][0] === "`" ? "`" : "~"}{${fence[1].length},}\\s*$`);
+      let j = i + 1;
+      while (j < lines.length && !closing.test(lines[j])) j += 1;
+      ranges.push([starts[i], j < lines.length ? endOf(j) : text.length]);
+      i = j + 1;
+      continue;
+    }
+
+    // CommonMark ends an HTML block at a blank line.
+    if (HTML_BLOCK.test(lines[i])) {
+      let j = i;
+      while (j < lines.length && lines[j].trim() !== "") j += 1;
+      ranges.push([starts[i], endOf(j - 1)]);
+      i = j;
+      continue;
+    }
+
+    if (INDENTED.test(lines[i]) && startsIndentedCode(lines, i)) {
+      let j = i;
+      let last = i;
+      while (j < lines.length && (lines[j].trim() === "" || INDENTED.test(lines[j]))) {
+        if (lines[j].trim() !== "") last = j;
+        j += 1;
+      }
+      ranges.push([starts[i], endOf(last)]);
+      i = j;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  return ranges;
+}
+
+/**
+ * An indented line is code only when it is not a list continuation. Nested
+ * bullets are indented too, and treating those as code would quietly stop
+ * matching inside every outline.
+ */
+function startsIndentedCode(lines: string[], index: number): boolean {
+  if (index > 0 && lines[index - 1].trim() !== "") return false;
+
+  for (let j = index - 2; j >= 0; j -= 1) {
+    if (lines[j].trim() === "") continue;
+    return !LIST_ITEM.test(lines[j]) && !INDENTED.test(lines[j]);
+  }
+
+  return true;
+}
+
+/** Inline constructs where a mention is not a mention. */
 const BLOCKED_PATTERNS = [
-  /```[\s\S]*?(?:```|$)/g, // fenced code
   /`[^`\n]*`/g, // inline code
   /\$\$[\s\S]*?(?:\$\$|$)/g, // display math
   /%%[\s\S]*?(?:%%|$)/g, // comments
@@ -321,31 +409,24 @@ const BLOCKED_PATTERNS = [
   /#[\p{L}\p{N}/_-]+/gu, // tags
 ];
 
-/** Section types that are never prose. Callouts and lists are, so they match. */
-const BLOCKED_SECTIONS = new Set(["yaml", "code", "math", "html", "comment"]);
-
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const HTML_BLOCK = /^ {0,3}<[a-zA-Z!/]/;
+const INDENTED = /^(?: {4}|\t)/;
+const LIST_ITEM = /^ *(?:[-*+]|\d+[.)])\s/;
 
 /**
- * Sorted, merged offset ranges the matcher must stay out of. The metadata
- * cache supplies frontmatter, code blocks and existing links; the patterns
- * cover the inline constructs it does not track as sections.
+ * Sorted, merged offset ranges the matcher must stay out of.
+ *
+ * Everything is derived from the text passed in, never from the metadata
+ * cache. The list scans the file as saved, but the link button and auto-link
+ * work on text the cache has not parsed yet, and cache offsets against fresher
+ * text are wrong offsets. One source means the three genuinely agree, which is
+ * what stops the button linking something the list refused to show.
  */
-export function blockedRanges(text: string, cache: CachedMetadata | null): Range[] {
-  const ranges: Range[] = [];
+export function blockedRanges(text: string): Range[] {
+  const ranges: Range[] = blockRanges(text);
 
-  for (const section of cache?.sections ?? []) {
-    if (BLOCKED_SECTIONS.has(section.type)) {
-      ranges.push([section.position.start.offset, section.position.end.offset]);
-    }
-  }
-
-  for (const ref of [...(cache?.links ?? []), ...(cache?.embeds ?? [])]) {
-    ranges.push([ref.position.start.offset, ref.position.end.offset]);
-  }
-
-  // Offsets are also derived from the text itself, so this stays correct when
-  // called against fresh file contents rather than the cached parse.
   const frontmatter = text.match(FRONTMATTER);
   if (frontmatter) ranges.push([0, frontmatter[0].length]);
 
@@ -384,10 +465,9 @@ function isBlocked(ranges: Range[], start: number, end: number): boolean {
 
 /**
  * Link a target's mentions: the first one, or all of them. Occurrences are
- * re-derived from the file's current contents with the same matcher the list
- * uses, rather than trusting offsets captured at render time, so an edit
- * between render and click cannot corrupt the note. Returns how many were
- * linked.
+ * re-derived from the note's current text with the same matcher the list uses,
+ * rather than trusting offsets captured at render time, so an edit between
+ * render and click cannot corrupt the note. Returns how many were linked.
  */
 export async function linkMention(
   app: App,
@@ -396,16 +476,23 @@ export async function linkMention(
   index: MentionIndex,
   scope: MentionScope
 ): Promise<number> {
+  const context = app.workspace.activeEditor;
+  const editor = context?.file?.path === source.path ? context.editor : null;
+
+  // Through the editor when the note is open: the link lands in one undo step,
+  // and keystrokes the editor has not saved yet cannot be clobbered by a
+  // disk-level write that never saw them.
+  if (editor) return linkThroughEditor(app, source, target, index, scope, editor);
+
+  const preview = spansToConvert(app, source, await app.vault.cachedRead(source), target, index, scope);
+  if (preview.length === 0) return 0;
+
   let linked = 0;
 
   await app.vault.process(source, (data) => {
-    const mention = scanMentions(app, source, data, blockedRanges(data, null), index).find(
-      (entry) => entry.file.path === target.path
-    );
-    if (!mention) return data;
-
-    const spans = spansToLink(mention, scope);
+    const spans = spansToConvert(app, source, data, target, index, scope);
     linked = spans.length;
+    if (spans.length === 0) return data;
 
     // Back to front, so earlier offsets stay valid as the text grows.
     let result = data;
@@ -417,4 +504,42 @@ export async function linkMention(
   });
 
   return linked;
+}
+
+function linkThroughEditor(
+  app: App,
+  source: TFile,
+  target: TFile,
+  index: MentionIndex,
+  scope: MentionScope,
+  editor: Editor
+): number {
+  const text = editor.getValue();
+  const spans = spansToConvert(app, source, text, target, index, scope);
+  if (spans.length === 0) return 0;
+
+  editor.transaction({
+    changes: spans.map((span) => ({
+      from: editor.offsetToPos(span.start),
+      to: editor.offsetToPos(span.end),
+      text: linkForSpan(app, source, target, text, span),
+    })),
+  });
+
+  return spans.length;
+}
+
+/** The spans of one target that a link action would convert, in `text`. */
+export function spansToConvert(
+  app: App,
+  source: TFile,
+  text: string,
+  target: TFile,
+  index: MentionIndex,
+  scope: MentionScope
+): Span[] {
+  const mention = scanMentions(app, source, text, blockedRanges(text), index).find(
+    (entry) => entry.file.path === target.path
+  );
+  return mention ? spansToLink(mention, scope) : [];
 }
