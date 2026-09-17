@@ -7,6 +7,7 @@ import {
 import { LocalGraphListView, VIEW_TYPE_LOCAL_GRAPH_LIST } from "./view";
 import { buildAdjacency, type AdjMap } from "./ppr";
 import { buildMentionIndex, type MentionIndex } from "./mentions";
+import { AutoLinker } from "./autolink";
 
 export default class LocalGraphListPlugin extends Plugin {
   settings: LocalGraphListSettings = DEFAULT_SETTINGS;
@@ -38,6 +39,11 @@ export default class LocalGraphListPlugin extends Plugin {
         this.adjacency = null;
         this.mentionIndex = null;
       })
+    );
+
+    const autoLinker = new AutoLinker(this);
+    this.registerEvent(
+      this.app.metadataCache.on("resolve", (file) => autoLinker.onResolve(file))
     );
 
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));

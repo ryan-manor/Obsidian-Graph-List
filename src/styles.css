@@ -137,9 +137,14 @@
 }
 
 /* Unlinked mentions: present but not yet part of the graph. The link button
-   only appears on hover so the ghost rows stay quiet at rest. */
-.lgl-ghost {
+   only appears on hover so the ghost rows stay quiet at rest. A row that is
+   already linked but mentioned again stays solid and gets the same button. */
+.lgl-ghost,
+.lgl-has-mentions {
   grid-template-columns: auto 1fr auto;
+}
+
+.lgl-ghost {
   opacity: 0.55;
 }
 
@@ -165,6 +170,7 @@
 }
 
 .lgl-ghost:hover .lgl-accept,
+.lgl-has-mentions:hover .lgl-accept,
 .lgl-accept:focus-visible {
   opacity: 1;
 }

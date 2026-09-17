@@ -1,5 +1,6 @@
 import { AbstractInputSuggest, App, PluginSettingTab, Setting } from "obsidian";
 import type LocalGraphListPlugin from "./main";
+import type { MentionScope } from "./mentions";
 
 /** Display key that follows whatever the list is sorted by. */
 export const SORT_PROPERTY = "sort";
@@ -32,6 +33,10 @@ export interface LocalGraphListSettings {
   includeAttachments: boolean;
   /** Append unlinked outbound mentions as ghost rows. */
   showMentions: boolean;
+  /** Whether the link button converts the first mention of a note or all of them. */
+  mentionScope: MentionScope;
+  /** With scope "all", link new mentions of already-linked notes while editing. */
+  autoLink: boolean;
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
@@ -44,6 +49,8 @@ export const DEFAULT_SETTINGS: LocalGraphListSettings = {
   showIndex: true,
   includeAttachments: false,
   showMentions: true,
+  mentionScope: "first",
+  autoLink: false,
 };
 
 /** Pseudo-properties read off the file itself rather than frontmatter. */
@@ -123,10 +130,24 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    new Setting(containerEl).setName("Sort").setHeading();
+    this.displaySort(containerEl);
+    this.displayList(containerEl);
+    this.displayProperties(containerEl);
+    this.displayMentions(containerEl);
+  }
+
+  private displaySort(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Sort")
+      .setDesc("Also changeable from the sort button in the view header.")
+      .setHeading();
 
     new Setting(containerEl)
       .setName("Sort by")
+      .setDesc(
+        "Graph proximity ranks links by how much of this note's neighbourhood they share. " +
+          "Notes missing the sort value always land last."
+      )
       .addDropdown((dropdown) =>
         dropdown
           .addOptions({
@@ -156,7 +177,7 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
     if (this.plugin.settings.sortKey === "property") {
       new Setting(containerEl)
         .setName("Sort property")
-        .setDesc("Notes missing this property are listed last")
+        .setDesc("Any frontmatter property, or a file.* pseudo-property")
         .addText((text) => {
           text
             .setPlaceholder("created")
@@ -171,29 +192,19 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           });
         });
     }
+  }
 
-    new Setting(containerEl).setName("Display").setHeading();
+  private displayList(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName("List").setHeading();
 
     new Setting(containerEl)
       .setName("Separate inbound and outbound")
-      .setDesc("Off shows the whole local graph as one flat list")
+      .setDesc("Links to, then Linked from. Off shows the whole local graph as one flat list.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.separateDirections)
           .onChange(async (value) => {
             this.plugin.settings.separateDirections = value;
-            await this.commit();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show property names")
-      .setDesc("Label each value with its property key")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showPropertyNames)
-          .onChange(async (value) => {
-            this.plugin.settings.showPropertyNames = value;
             await this.commit();
           })
       );
@@ -211,22 +222,8 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Show unlinked mentions")
-      .setDesc(
-        "Append notes this one names but does not link, as ghost rows with a link button"
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.showMentions)
-          .onChange(async (value) => {
-            this.plugin.settings.showMentions = value;
-            await this.commit();
-          })
-      );
-
-    new Setting(containerEl)
       .setName("Include attachments")
-      .setDesc("Link images, PDFs and other non-note files alongside notes")
+      .setDesc("List linked images, PDFs and other non-note files alongside notes")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.includeAttachments)
@@ -235,13 +232,16 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
             await this.commit();
           })
       );
+  }
 
+  private displayProperties(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName("Properties")
       .setDesc(
         `Shown under each title, in this order. Empty values are skipped. ` +
           `"${SORT_PROPERTY}" tracks whatever you sort by; "${PROXIMITY_PROPERTY}" is the graph score.`
       )
+      .setHeading()
       .addButton((button) =>
         button
           .setIcon("plus")
@@ -250,6 +250,18 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
             this.plugin.settings.properties.push("");
             await this.commit();
             this.display();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show property names")
+      .setDesc("Label each value with its property key")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showPropertyNames)
+          .onChange(async (value) => {
+            this.plugin.settings.showPropertyNames = value;
+            await this.commit();
           })
       );
 
@@ -320,5 +332,64 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
         text: "No properties selected. Only titles will be shown.",
       });
     }
+  }
+
+  private displayMentions(containerEl: HTMLElement): void {
+    const { settings } = this.plugin;
+
+    new Setting(containerEl)
+      .setName("Unlinked mentions")
+      .setDesc(
+        "Whole words only, case-insensitive. Frontmatter, code, URLs, tags and existing " +
+          "links are never matched, and notes under Excluded files are never suggested."
+      )
+      .setHeading();
+
+    new Setting(containerEl)
+      .setName("Show unlinked mentions")
+      .setDesc("Notes this one names but does not link, as ghost rows with a link button")
+      .addToggle((toggle) =>
+        toggle.setValue(settings.showMentions).onChange(async (value) => {
+          settings.showMentions = value;
+          await this.commit();
+          this.display();
+        })
+      );
+
+    if (!settings.showMentions) return;
+
+    new Setting(containerEl)
+      .setName("Link")
+      .setDesc(
+        settings.mentionScope === "first"
+          ? "The link button links the first mention. Once a note is linked, its other mentions stay plain text."
+          : "The link button links every mention. A note that is linked but mentioned again keeps its link button."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOptions({ first: "First mention", all: "All mentions" })
+          .setValue(settings.mentionScope)
+          .onChange(async (value) => {
+            settings.mentionScope = value as MentionScope;
+            await this.commit();
+            this.display();
+          })
+      );
+
+    if (settings.mentionScope !== "all") return;
+
+    new Setting(containerEl)
+      .setName("Auto-link new mentions")
+      .setDesc(
+        "When you mention a note this one already links, link it on the next save. " +
+          "Skips the line you are typing on. Undoing an auto-link turns it off for that note " +
+          "until Obsidian restarts. Notes you have never linked are only ever suggested."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(settings.autoLink).onChange(async (value) => {
+          settings.autoLink = value;
+          await this.commit();
+        })
+      );
   }
 }

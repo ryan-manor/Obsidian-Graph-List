@@ -8,9 +8,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -37,7 +37,9 @@ var DEFAULT_SETTINGS = {
   showPropertyNames: false,
   showIndex: true,
   includeAttachments: false,
-  showMentions: true
+  showMentions: true,
+  mentionScope: "first",
+  autoLink: false
 };
 var FILE_PROPERTIES = [
   "file.name",
@@ -60,7 +62,7 @@ function getAllPropertyKeys(app) {
   } else {
     for (const file of app.vault.getMarkdownFiles()) {
       const fm = (_b = app.metadataCache.getFileCache(file)) == null ? void 0 : _b.frontmatter;
-      if (fm) for (const key of Object.keys(fm)) keys.add(key);
+      if (fm) for (const key2 of Object.keys(fm)) keys.add(key2);
     }
   }
   return [...keys].sort((a, b) => a.localeCompare(b));
@@ -72,14 +74,14 @@ var PropertySuggest = class extends import_obsidian.AbstractInputSuggest {
   }
   getSuggestions(query) {
     const q = query.toLowerCase();
-    return getAllPropertyKeys(this.app).filter((key) => key.toLowerCase().includes(q)).slice(0, 20);
+    return getAllPropertyKeys(this.app).filter((key2) => key2.toLowerCase().includes(q)).slice(0, 20);
   }
-  renderSuggestion(key, el) {
-    el.setText(key);
+  renderSuggestion(key2, el) {
+    el.setText(key2);
   }
-  selectSuggestion(key) {
-    this.setValue(key);
-    this.onPick(key);
+  selectSuggestion(key2) {
+    this.setValue(key2);
+    this.onPick(key2);
     this.close();
   }
 };
@@ -95,8 +97,16 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian.Setting(containerEl).setName("Sort").setHeading();
-    new import_obsidian.Setting(containerEl).setName("Sort by").addDropdown(
+    this.displaySort(containerEl);
+    this.displayList(containerEl);
+    this.displayProperties(containerEl);
+    this.displayMentions(containerEl);
+  }
+  displaySort(containerEl) {
+    new import_obsidian.Setting(containerEl).setName("Sort").setDesc("Also changeable from the sort button in the view header.").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Sort by").setDesc(
+      "Graph proximity ranks links by how much of this note's neighbourhood they share. Notes missing the sort value always land last."
+    ).addDropdown(
       (dropdown) => dropdown.addOptions({
         proximity: "Graph proximity",
         created: "Created time",
@@ -115,27 +125,23 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
       })
     );
     if (this.plugin.settings.sortKey === "property") {
-      new import_obsidian.Setting(containerEl).setName("Sort property").setDesc("Notes missing this property are listed last").addText((text) => {
+      new import_obsidian.Setting(containerEl).setName("Sort property").setDesc("Any frontmatter property, or a file.* pseudo-property").addText((text) => {
         text.setPlaceholder("created").setValue(this.plugin.settings.sortProperty).onChange(async (value) => {
           this.plugin.settings.sortProperty = value.trim();
           await this.commit();
         });
-        new PropertySuggest(this.app, text.inputEl, async (key) => {
-          this.plugin.settings.sortProperty = key;
+        new PropertySuggest(this.app, text.inputEl, async (key2) => {
+          this.plugin.settings.sortProperty = key2;
           await this.commit();
         });
       });
     }
-    new import_obsidian.Setting(containerEl).setName("Display").setHeading();
-    new import_obsidian.Setting(containerEl).setName("Separate inbound and outbound").setDesc("Off shows the whole local graph as one flat list").addToggle(
+  }
+  displayList(containerEl) {
+    new import_obsidian.Setting(containerEl).setName("List").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Separate inbound and outbound").setDesc("Links to, then Linked from. Off shows the whole local graph as one flat list.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.separateDirections).onChange(async (value) => {
         this.plugin.settings.separateDirections = value;
-        await this.commit();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("Show property names").setDesc("Label each value with its property key").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.showPropertyNames).onChange(async (value) => {
-        this.plugin.settings.showPropertyNames = value;
         await this.commit();
       })
     );
@@ -145,27 +151,27 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.commit();
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Show unlinked mentions").setDesc(
-      "Append notes this one names but does not link, as ghost rows with a link button"
-    ).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.showMentions).onChange(async (value) => {
-        this.plugin.settings.showMentions = value;
-        await this.commit();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("Include attachments").setDesc("Link images, PDFs and other non-note files alongside notes").addToggle(
+    new import_obsidian.Setting(containerEl).setName("Include attachments").setDesc("List linked images, PDFs and other non-note files alongside notes").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.includeAttachments).onChange(async (value) => {
         this.plugin.settings.includeAttachments = value;
         await this.commit();
       })
     );
+  }
+  displayProperties(containerEl) {
     new import_obsidian.Setting(containerEl).setName("Properties").setDesc(
       `Shown under each title, in this order. Empty values are skipped. "${SORT_PROPERTY}" tracks whatever you sort by; "${PROXIMITY_PROPERTY}" is the graph score.`
-    ).addButton(
+    ).setHeading().addButton(
       (button) => button.setIcon("plus").setTooltip("Add property").onClick(async () => {
         this.plugin.settings.properties.push("");
         await this.commit();
         this.display();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Show property names").setDesc("Label each value with its property key").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.showPropertyNames).onChange(async (value) => {
+        this.plugin.settings.showPropertyNames = value;
+        await this.commit();
       })
     );
     const { properties } = this.plugin.settings;
@@ -176,8 +182,8 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
           properties[index] = value.trim();
           await this.commit();
         });
-        new PropertySuggest(this.app, text.inputEl, async (key) => {
-          properties[index] = key;
+        new PropertySuggest(this.app, text.inputEl, async (key2) => {
+          properties[index] = key2;
           await this.commit();
         });
       });
@@ -215,6 +221,38 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
         text: "No properties selected. Only titles will be shown."
       });
     }
+  }
+  displayMentions(containerEl) {
+    const { settings } = this.plugin;
+    new import_obsidian.Setting(containerEl).setName("Unlinked mentions").setDesc(
+      "Whole words only, case-insensitive. Frontmatter, code, URLs, tags and existing links are never matched, and notes under Excluded files are never suggested."
+    ).setHeading();
+    new import_obsidian.Setting(containerEl).setName("Show unlinked mentions").setDesc("Notes this one names but does not link, as ghost rows with a link button").addToggle(
+      (toggle) => toggle.setValue(settings.showMentions).onChange(async (value) => {
+        settings.showMentions = value;
+        await this.commit();
+        this.display();
+      })
+    );
+    if (!settings.showMentions) return;
+    new import_obsidian.Setting(containerEl).setName("Link").setDesc(
+      settings.mentionScope === "first" ? "The link button links the first mention. Once a note is linked, its other mentions stay plain text." : "The link button links every mention. A note that is linked but mentioned again keeps its link button."
+    ).addDropdown(
+      (dropdown) => dropdown.addOptions({ first: "First mention", all: "All mentions" }).setValue(settings.mentionScope).onChange(async (value) => {
+        settings.mentionScope = value;
+        await this.commit();
+        this.display();
+      })
+    );
+    if (settings.mentionScope !== "all") return;
+    new import_obsidian.Setting(containerEl).setName("Auto-link new mentions").setDesc(
+      "When you mention a note this one already links, link it on the next save. Skips the line you are typing on. Undoing an auto-link turns it off for that note until Obsidian restarts. Notes you have never linked are only ever suggested."
+    ).addToggle(
+      (toggle) => toggle.setValue(settings.autoLink).onChange(async (value) => {
+        settings.autoLink = value;
+        await this.commit();
+      })
+    );
   }
 };
 
@@ -279,9 +317,9 @@ function resolveSortProperty(settings) {
       return null;
   }
 }
-function getPropertyValue(app, file, key) {
+function getPropertyValue(app, file, key2) {
   var _a, _b, _c, _d, _e, _f;
-  switch (key) {
+  switch (key2) {
     case "file.name":
       return file.basename;
     case "file.path":
@@ -299,7 +337,7 @@ function getPropertyValue(app, file, key) {
     case "file.tags":
       return (_d = (0, import_obsidian2.getAllTags)((_c = app.metadataCache.getFileCache(file)) != null ? _c : {})) != null ? _d : [];
   }
-  return (_f = (_e = app.metadataCache.getFileCache(file)) == null ? void 0 : _e.frontmatter) == null ? void 0 : _f[key];
+  return (_f = (_e = app.metadataCache.getFileCache(file)) == null ? void 0 : _e.frontmatter) == null ? void 0 : _f[key2];
 }
 function unwrapLink(value) {
   const match = value.match(/^!?\[\[([^\]]+)\]\]$/);
@@ -476,9 +514,9 @@ function buildMentionIndex(app) {
     if (ignored(file.path)) continue;
     const name = (_d = suggestion.alias) != null ? _d : file.basename;
     if (name.length < MIN_NAME_LENGTH) continue;
-    const key = `${file.path}\0${name}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key2 = `${file.path}\0${name}`;
+    if (seen.has(key2)) continue;
+    seen.add(key2);
     const lower = name.toLowerCase();
     const first = (_e = lower.match(WORD)) == null ? void 0 : _e[0];
     if (!first) continue;
@@ -517,19 +555,20 @@ function makeIgnoreTest(app) {
   return (path) => tests.some((test) => test(path));
 }
 async function findUnlinkedMentions(app, file, index) {
-  var _a, _b;
   const text = await app.vault.cachedRead(file);
   const cache = app.metadataCache.getFileCache(file);
-  const blocked = blockedRanges(text, cache);
-  const linked = new Set(Object.keys((_a = app.metadataCache.resolvedLinks[file.path]) != null ? _a : {}));
+  return scanMentions(app, file, text, blockedRanges(text, cache), index);
+}
+function scanMentions(app, source, text, blocked, index) {
+  var _a, _b;
+  const linked = new Set(Object.keys((_a = app.metadataCache.resolvedLinks[source.path]) != null ? _a : {}));
   const lower = text.toLowerCase();
   const words = new Set((_b = lower.match(WORD)) != null ? _b : []);
   const hits = [];
   for (const [first, candidates] of index) {
     if (!words.has(first)) continue;
     for (const candidate of candidates) {
-      if (candidate.file.path === file.path) continue;
-      if (linked.has(candidate.file.path)) continue;
+      if (candidate.file.path === source.path) continue;
       for (const start of findOccurrences(text, lower, candidate, blocked)) {
         hits.push({ start, end: start + candidate.name.length, candidate });
       }
@@ -541,21 +580,40 @@ async function findUnlinkedMentions(app, file, index) {
   for (const hit of hits) {
     if (taken.some(([start, end]) => hit.start < end && hit.end > start)) continue;
     taken.push([hit.start, hit.end]);
+    const span = { start: hit.start, end: hit.end, name: hit.candidate.name };
     const entry = found.get(hit.candidate.file.path);
-    if (!entry) {
+    if (entry) {
+      entry.spans.push(span);
+    } else {
       found.set(hit.candidate.file.path, {
         file: hit.candidate.file,
         name: hit.candidate.name,
-        count: 1,
-        first: hit.start
+        count: 0,
+        linked: linked.has(hit.candidate.file.path),
+        spans: [span]
       });
-      continue;
     }
-    entry.count += 1;
-    if (hit.candidate.name === entry.name) entry.first = Math.min(entry.first, hit.start);
+  }
+  for (const mention of found.values()) {
+    mention.spans.sort((a, b) => a.start - b.start);
+    mention.count = mention.spans.length;
   }
   return [...found.values()].sort(
     (a, b) => b.count - a.count || b.name.length - a.name.length || a.file.basename.localeCompare(b.file.basename)
+  );
+}
+function spansToLink(mention, scope) {
+  if (scope === "all") return mention.spans;
+  const first = mention.spans.find((span) => span.name === mention.name);
+  return first ? [first] : [];
+}
+function linkForSpan(app, source, target, text, span) {
+  const shown = text.slice(span.start, span.end);
+  return app.fileManager.generateMarkdownLink(
+    target,
+    source.path,
+    void 0,
+    shown === target.basename ? void 0 : shown
   );
 }
 function findOccurrences(text, lower, candidate, blocked) {
@@ -627,27 +685,21 @@ function isBlocked(ranges, start, end) {
   }
   return false;
 }
-async function linkMention(app, source, mention) {
-  const candidate = {
-    name: mention.name,
-    lower: mention.name.toLowerCase(),
-    file: mention.file
-  };
-  let linked = false;
+async function linkMention(app, source, target, index, scope) {
+  let linked = 0;
   await app.vault.process(source, (data) => {
-    const hits = findOccurrences(data, data.toLowerCase(), candidate, blockedRanges(data, null));
-    if (hits.length === 0) return data;
-    const start = hits[0];
-    const end = start + mention.name.length;
-    const shown = data.slice(start, end);
-    const link = app.fileManager.generateMarkdownLink(
-      mention.file,
-      source.path,
-      void 0,
-      shown === mention.file.basename ? void 0 : shown
+    const mention = scanMentions(app, source, data, blockedRanges(data, null), index).find(
+      (entry) => entry.file.path === target.path
     );
-    linked = true;
-    return data.slice(0, start) + link + data.slice(end);
+    if (!mention) return data;
+    const spans = spansToLink(mention, scope);
+    linked = spans.length;
+    let result = data;
+    for (const span of [...spans].reverse()) {
+      const link = linkForSpan(app, source, target, data, span);
+      result = result.slice(0, span.start) + link + result.slice(span.end);
+    }
+    return result;
   });
   return linked;
 }
@@ -661,8 +713,8 @@ var SORT_LABELS = {
   property: "Property",
   title: "Title"
 };
-function normalizeTags(key, value) {
-  if (key !== "tags" && key !== "file.tags") return value;
+function normalizeTags(key2, value) {
+  if (key2 !== "tags" && key2 !== "file.tags") return value;
   const hash = (entry) => typeof entry === "string" && entry && !entry.startsWith("#") ? `#${entry}` : entry;
   return Array.isArray(value) ? value.map(hash) : hash(value);
 }
@@ -718,6 +770,9 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     if (file && this.plugin.settings.showMentions) {
       mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
       if (token !== this.renderToken) return;
+      if (this.plugin.settings.mentionScope === "first") {
+        mentions = mentions.filter((mention) => !mention.linked);
+      }
     }
     const { contentEl } = this;
     contentEl.empty();
@@ -736,7 +791,15 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       return;
     }
     groups.forEach((group, groupIndex) => {
-      const ghosts = groupIndex === 0 ? mentions : [];
+      const pending = /* @__PURE__ */ new Map();
+      const ghosts = [];
+      if (groupIndex === 0) {
+        const rows = new Set(group.files.map((neighbor) => neighbor.path));
+        for (const mention of mentions) {
+          if (rows.has(mention.file.path)) pending.set(mention.file.path, mention);
+          else if (!mention.linked) ghosts.push(mention);
+        }
+      }
       if (group.files.length === 0 && ghosts.length === 0) return;
       const header = contentEl.createDiv({ cls: "lgl-group-header" });
       header.createSpan({ cls: "lgl-group-label", text: group.label });
@@ -747,7 +810,7 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       const list = contentEl.createDiv({ cls: "lgl-list" });
       group.files.forEach((neighbor, index) => {
         this.renderedPaths.add(neighbor.path);
-        this.renderItem(list, neighbor, file, index + 1, proximity);
+        this.renderItem(list, neighbor, file, index + 1, proximity, pending.get(neighbor.path));
       });
       ghosts.forEach((mention, index) => {
         this.renderMention(list, mention, file, group.files.length + index + 1);
@@ -786,20 +849,39 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
         sourcePath: source.path
       });
     });
+    this.renderAcceptButton(item, mention, source);
+    this.renderMentionSummary(item.createDiv({ cls: "lgl-props" }), mention);
+  }
+  /** Hover button that links the mention, first occurrence or all per the scope. */
+  renderAcceptButton(item, mention, source) {
+    const scope = this.plugin.settings.mentionScope;
     const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
     (0, import_obsidian3.setIcon)(accept, "link");
-    accept.setAttribute("aria-label", `Link "${mention.name}"`);
+    accept.setAttribute(
+      "aria-label",
+      scope === "all" && mention.count > 1 ? `Link all ${mention.count} mentions` : `Link "${mention.name}"`
+    );
     accept.addEventListener("click", async (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
-      if (await linkMention(this.app, source, mention)) this.render();
+      const linked = await linkMention(
+        this.app,
+        source,
+        mention.file,
+        this.plugin.getMentionIndex(),
+        scope
+      );
+      if (linked > 0) this.render();
     });
-    const propsEl = item.createDiv({ cls: "lgl-props" });
-    const row = propsEl.createDiv({ cls: "lgl-prop" });
+  }
+  /** Mention count, plus the alias that matched when it is not the title. */
+  renderMentionSummary(propsEl, mention) {
+    const row = propsEl.createDiv({ cls: "lgl-prop lgl-mention-row" });
     const values = row.createDiv({ cls: "lgl-prop-values" });
+    const noun = mention.linked ? "unlinked mention" : "mention";
     values.createSpan({
       cls: "lgl-value lgl-mention-count",
-      text: mention.count === 1 ? "1 mention" : `${mention.count} mentions`
+      text: `${mention.count} ${noun}${mention.count === 1 ? "" : "s"}`
     });
     if (mention.name !== mention.file.basename) {
       values.createSpan({ cls: "lgl-value lgl-pill", text: mention.name });
@@ -819,12 +901,12 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
   openSortMenu(evt) {
     const menu = new import_obsidian3.Menu();
     const { settings } = this.plugin;
-    for (const key of Object.keys(SORT_LABELS)) {
+    for (const key2 of Object.keys(SORT_LABELS)) {
       menu.addItem(
         (item) => item.setTitle(
-          key === "property" && settings.sortProperty ? `Property: ${settings.sortProperty}` : SORT_LABELS[key]
-        ).setChecked(settings.sortKey === key).onClick(async () => {
-          settings.sortKey = key;
+          key2 === "property" && settings.sortProperty ? `Property: ${settings.sortProperty}` : SORT_LABELS[key2]
+        ).setChecked(settings.sortKey === key2).onClick(async () => {
+          settings.sortKey = key2;
           await this.plugin.saveSettings();
           this.plugin.refreshViews();
         })
@@ -850,9 +932,13 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     );
     menu.showAtMouseEvent(evt);
   }
-  renderItem(parent, file, source, index, proximity) {
+  renderItem(parent, file, source, index, proximity, mention) {
     var _a;
     const item = parent.createDiv({ cls: "lgl-item" });
+    if (mention) {
+      item.addClass("lgl-has-mentions");
+      this.renderAcceptButton(item, mention, source);
+    }
     if (this.plugin.settings.showIndex) {
       item.createSpan({ cls: "lgl-index", text: `${index}.` });
     }
@@ -881,19 +967,19 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       menu.showAtMouseEvent(evt);
     });
     const props = this.plugin.settings.properties.filter(Boolean);
-    if (props.length === 0) return;
     const propsEl = item.createDiv({ cls: "lgl-props" });
     for (const prop of props) {
-      const key = prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
-      if (!key) continue;
-      const value = key === PROXIMITY_PROPERTY ? (_a = proximity.get(file.path)) == null ? void 0 : _a.toFixed(2) : normalizeTags(key, getPropertyValue(this.app, file, key));
+      const key2 = prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
+      if (!key2) continue;
+      const value = key2 === PROXIMITY_PROPERTY ? (_a = proximity.get(file.path)) == null ? void 0 : _a.toFixed(2) : normalizeTags(key2, getPropertyValue(this.app, file, key2));
       const row = propsEl.createDiv({ cls: "lgl-prop" });
       if (this.plugin.settings.showPropertyNames) {
-        row.createSpan({ cls: "lgl-prop-name", text: key });
+        row.createSpan({ cls: "lgl-prop-name", text: key2 });
       }
       const values = row.createDiv({ cls: "lgl-prop-values" });
       if (!this.renderValue(values, value, source.path)) row.remove();
     }
+    if (mention) this.renderMentionSummary(propsEl, mention);
     if (propsEl.childElementCount === 0) propsEl.remove();
   }
   /** Render a property value. Returns false when there was nothing to show. */
@@ -966,6 +1052,88 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
   }
 };
 
+// src/autolink.ts
+var AutoLinker = class {
+  constructor(plugin) {
+    this.plugin = plugin;
+    /** Fewest links each auto-linked target should have, from the last auto-link on. */
+    this.expected = /* @__PURE__ */ new Map();
+    /** Targets the user unlinked after an auto-link, per source note. */
+    this.declined = /* @__PURE__ */ new Set();
+  }
+  /** Runs on the metadata cache's per-file `resolve`, when link counts are fresh. */
+  onResolve(file) {
+    var _a, _b, _c;
+    const { app, settings } = this.plugin;
+    if (!settings.showMentions || settings.mentionScope !== "all" || !settings.autoLink) {
+      return;
+    }
+    const context = app.workspace.activeEditor;
+    const editor = context == null ? void 0 : context.editor;
+    if (!editor || ((_a = context.file) == null ? void 0 : _a.path) !== file.path || !editor.hasFocus()) return;
+    const counts = (_b = app.metadataCache.resolvedLinks[file.path]) != null ? _b : {};
+    this.noteDeclines(file, counts);
+    const text = editor.getValue();
+    const mentions = scanMentions(
+      app,
+      file,
+      text,
+      blockedRanges(text, null),
+      this.plugin.getMentionIndex()
+    ).filter((mention) => mention.linked && !this.declined.has(key(file, mention.file)));
+    if (mentions.length === 0) return;
+    const busy = editor.listSelections().map(({ anchor, head }) => [
+      Math.min(anchor.line, head.line),
+      Math.max(anchor.line, head.line)
+    ]);
+    const changes = [];
+    for (const mention of mentions) {
+      let added = 0;
+      for (const span of mention.spans) {
+        const from = editor.offsetToPos(span.start);
+        if (busy.some(([first, last]) => from.line >= first && from.line <= last)) continue;
+        changes.push({
+          from,
+          to: editor.offsetToPos(span.end),
+          text: linkForSpan(app, file, mention.file, text, span)
+        });
+        added += 1;
+      }
+      if (added > 0) {
+        this.expected.set(key(file, mention.file), {
+          count: ((_c = counts[mention.file.path]) != null ? _c : 0) + added,
+          at: Date.now()
+        });
+      }
+    }
+    if (changes.length > 0) editor.transaction({ changes });
+  }
+  /**
+   * A target that drops below the most links it has had since auto-link
+   * touched it was unlinked on purpose, whether by undo straight away or by
+   * deleting the link later. Only checked once the file has been written since
+   * the auto-link, so a resolve that still reflects the pre-edit text is not
+   * mistaken for one.
+   */
+  noteDeclines(file, counts) {
+    var _a;
+    const prefix = `${file.path}\0`;
+    for (const [id, expected] of this.expected) {
+      if (!id.startsWith(prefix) || file.stat.mtime <= expected.at) continue;
+      const actual = (_a = counts[id.slice(prefix.length)]) != null ? _a : 0;
+      if (actual < expected.count) {
+        this.declined.add(id);
+        this.expected.delete(id);
+      } else {
+        expected.count = actual;
+      }
+    }
+  }
+};
+function key(source, target) {
+  return `${source.path}\0${target.path}`;
+}
+
 // src/main.ts
 var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
   constructor() {
@@ -993,6 +1161,10 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
         this.adjacency = null;
         this.mentionIndex = null;
       })
+    );
+    const autoLinker = new AutoLinker(this);
+    this.registerEvent(
+      this.app.metadataCache.on("resolve", (file) => autoLinker.onResolve(file))
     );
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));
   }

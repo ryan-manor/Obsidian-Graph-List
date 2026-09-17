@@ -101,6 +101,12 @@ export class LocalGraphListView extends ItemView {
     if (file && this.plugin.settings.showMentions) {
       mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
       if (token !== this.renderToken) return;
+
+      // With "first", a linked note is done: its other mentions stay plain.
+      // With "all", leftover mentions of a linked note bring its button back.
+      if (this.plugin.settings.mentionScope === "first") {
+        mentions = mentions.filter((mention) => !mention.linked);
+      }
     }
 
     const { contentEl } = this;
@@ -127,8 +133,18 @@ export class LocalGraphListView extends ItemView {
 
     groups.forEach((group, groupIndex) => {
       // Mentions are outbound candidates, so they ride with the first group,
-      // which is the flat list or Links to depending on the setting.
-      const ghosts = groupIndex === 0 ? mentions : [];
+      // which is the flat list or Links to depending on the setting. A target
+      // that already has a row there gets the button on that row instead of a
+      // second, ghosted one.
+      const pending = new Map<string, Mention>();
+      const ghosts: Mention[] = [];
+      if (groupIndex === 0) {
+        const rows = new Set(group.files.map((neighbor) => neighbor.path));
+        for (const mention of mentions) {
+          if (rows.has(mention.file.path)) pending.set(mention.file.path, mention);
+          else if (!mention.linked) ghosts.push(mention);
+        }
+      }
       if (group.files.length === 0 && ghosts.length === 0) return;
 
       const header = contentEl.createDiv({ cls: "lgl-group-header" });
@@ -143,7 +159,7 @@ export class LocalGraphListView extends ItemView {
       const list = contentEl.createDiv({ cls: "lgl-list" });
       group.files.forEach((neighbor, index) => {
         this.renderedPaths.add(neighbor.path);
-        this.renderItem(list, neighbor, file, index + 1, proximity);
+        this.renderItem(list, neighbor, file, index + 1, proximity, pending.get(neighbor.path));
       });
 
       ghosts.forEach((mention, index) => {
@@ -194,22 +210,44 @@ export class LocalGraphListView extends ItemView {
       });
     });
 
+    this.renderAcceptButton(item, mention, source);
+    this.renderMentionSummary(item.createDiv({ cls: "lgl-props" }), mention);
+  }
+
+  /** Hover button that links the mention, first occurrence or all per the scope. */
+  private renderAcceptButton(item: HTMLElement, mention: Mention, source: TFile): void {
+    const scope = this.plugin.settings.mentionScope;
     const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
     setIcon(accept, "link");
-    accept.setAttribute("aria-label", `Link "${mention.name}"`);
+    accept.setAttribute(
+      "aria-label",
+      scope === "all" && mention.count > 1
+        ? `Link all ${mention.count} mentions`
+        : `Link "${mention.name}"`
+    );
     accept.addEventListener("click", async (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
-      if (await linkMention(this.app, source, mention)) this.render();
+      const linked = await linkMention(
+        this.app,
+        source,
+        mention.file,
+        this.plugin.getMentionIndex(),
+        scope
+      );
+      if (linked > 0) this.render();
     });
+  }
 
-    const propsEl = item.createDiv({ cls: "lgl-props" });
-    const row = propsEl.createDiv({ cls: "lgl-prop" });
+  /** Mention count, plus the alias that matched when it is not the title. */
+  private renderMentionSummary(propsEl: HTMLElement, mention: Mention): void {
+    const row = propsEl.createDiv({ cls: "lgl-prop lgl-mention-row" });
     const values = row.createDiv({ cls: "lgl-prop-values" });
 
+    const noun = mention.linked ? "unlinked mention" : "mention";
     values.createSpan({
       cls: "lgl-value lgl-mention-count",
-      text: mention.count === 1 ? "1 mention" : `${mention.count} mentions`,
+      text: `${mention.count} ${noun}${mention.count === 1 ? "" : "s"}`,
     });
 
     if (mention.name !== mention.file.basename) {
@@ -288,9 +326,14 @@ export class LocalGraphListView extends ItemView {
     file: TFile,
     source: TFile,
     index: number,
-    proximity: Map<string, number>
+    proximity: Map<string, number>,
+    mention?: Mention
   ): void {
     const item = parent.createDiv({ cls: "lgl-item" });
+    if (mention) {
+      item.addClass("lgl-has-mentions");
+      this.renderAcceptButton(item, mention, source);
+    }
 
     if (this.plugin.settings.showIndex) {
       item.createSpan({ cls: "lgl-index", text: `${index}.` });
@@ -325,8 +368,6 @@ export class LocalGraphListView extends ItemView {
     });
 
     const props = this.plugin.settings.properties.filter(Boolean);
-    if (props.length === 0) return;
-
     const propsEl = item.createDiv({ cls: "lgl-props" });
 
     for (const prop of props) {
@@ -347,6 +388,8 @@ export class LocalGraphListView extends ItemView {
       const values = row.createDiv({ cls: "lgl-prop-values" });
       if (!this.renderValue(values, value, source.path)) row.remove();
     }
+
+    if (mention) this.renderMentionSummary(propsEl, mention);
 
     if (propsEl.childElementCount === 0) propsEl.remove();
   }

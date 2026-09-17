@@ -25,8 +25,9 @@ underneath.
 
 ## Controls
 
-Everything is global — configured once in settings, no per-note overrides. The
-sort control in the view header writes to the same settings.
+Everything is global, configured once under Settings → Community plugins → Local
+Graph List, with no per-note overrides. The sort control in the view header
+writes to the same settings.
 
 | Setting | What it does |
 | --- | --- |
@@ -38,6 +39,8 @@ sort control in the view header writes to the same settings.
 | Number rows | Running count beside each title |
 | Include attachments | Show linked images and PDFs alongside notes |
 | Show unlinked mentions | Append notes this one names but does not link |
+| Link | Whether the link button links the first mention or all of them |
+| Auto-link new mentions | With "All mentions", link new mentions of notes you already linked as you write |
 
 ## Ranking by graph proximity
 
@@ -68,8 +71,23 @@ inside a neighbourhood.
 ## Unlinked mentions
 
 Notes named in the text but not linked are appended to the outbound group as ghost rows,
-with a mention count and a link button that turns the first occurrence into a wikilink.
-Accepting one re-renders the list, so the row turns solid and sorts with the rest.
+with a mention count and a link button. Accepting one re-renders the list, so the row
+turns solid and sorts with the rest. If the target already has a row (an inbound link in
+the flat list), the button goes on that row instead of a duplicate ghost.
+
+The **Link** setting decides what the button converts:
+
+- **First mention** (default). Once a note is linked, its other mentions stay plain text.
+- **All mentions**. Every clean occurrence is linked. Mention a linked note again later and
+  its row gets the button back with an "N unlinked mentions" count.
+- **Auto-link new mentions** (off by default, all mentions only). New mentions of notes
+  this one already links are linked on the next save. It never touches a note you have not
+  linked yourself, skips any line holding a cursor, and edits through the editor so one
+  undo reverts it. Undoing or deleting an auto-link stops it for that target in that note
+  until the plugin reloads.
+
+The list, the button and auto-link run the same matcher on the current text, so they agree
+on what counts as a mention and an edit between render and click cannot misplace a link.
 
 Matching is case-insensitive like Obsidian's own, so a lowercase "style" still nudges
 towards the Style page. What differs is everything around the match. Obsidian renders
@@ -81,8 +99,9 @@ across 3 survive here. The filtering is structural, not a ranking:
   "Adobe Lightroom" and strand the first word.
 - Frontmatter, code blocks, inline code, URLs, existing links and tags are skipped.
   These are the places where linking would break the formatting.
-- Targets this note already links are dropped, so a note linked once does not keep
-  suggesting itself for every other time it appears.
+- Targets this note already links are dropped in first-mention mode, so a note linked
+  once does not keep suggesting itself for every other time it appears. They still own
+  their names in overlap resolution.
 - One row per target rather than per occurrence, with all occurrences counted.
 - Notes under Obsidian's "Excluded files" setting are never suggested, matching what
   its own link suggester does. Links you already made to them still show.
