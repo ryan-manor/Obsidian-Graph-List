@@ -127,9 +127,16 @@ an unlinked candidate usually shares no neighbours with the note, so it scores z
 
 ```
 npm install
-npm run dev      # watch, copies main.js + styles.css + manifest.json to the vault
-npm run build    # production
+npm run dev        # watch, copies main.js + styles.css + manifest.json to the vault
+npm run build      # production
+npm run typecheck
+npm test           # bundles tests/ and runs them on node:test
 ```
+
+The tests cover the matcher: blocked ranges, word boundaries, overlap resolution,
+the alias floor and link scope. That is the code that decides where the plugin
+writes into prose, so it is the part worth pinning down. Nothing in it touches
+Obsidian at runtime, which is what makes it testable outside the app.
 
 `esbuild.config.mjs` hardcodes the vault plugin directory — change it there if
 your vault lives elsewhere.
