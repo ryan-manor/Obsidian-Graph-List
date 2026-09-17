@@ -171,6 +171,52 @@ export class LocalGraphListView extends ItemView {
         this.renderMention(list, mention, file, group.files.length + index + 1);
       });
     });
+
+    this.renderUnresolved(contentEl, file);
+  }
+
+  /**
+   * Links to notes that do not exist. The outgoing pane keeps these in their
+   * own section, and without them this view cannot replace it. Clicking one
+   * creates the note, which is what Obsidian itself does.
+   */
+  private renderUnresolved(parent: HTMLElement, file: TFile): void {
+    const entries = Object.entries(this.app.metadataCache.unresolvedLinks[file.path] ?? {});
+    if (entries.length === 0) return;
+
+    entries.sort(([nameA, countA], [nameB, countB]) => countB - countA || nameA.localeCompare(nameB));
+
+    const header = parent.createDiv({ cls: "lgl-group-header" });
+    header.createSpan({ cls: "lgl-group-label", text: "Unresolved" });
+    header.createSpan({ cls: "lgl-group-count", text: String(entries.length) });
+
+    const list = parent.createDiv({ cls: "lgl-list" });
+
+    entries.forEach(([name, count], index) => {
+      const item = list.createDiv({ cls: "lgl-item lgl-unresolved" });
+
+      if (this.plugin.settings.showIndex) {
+        item.createSpan({ cls: "lgl-index", text: `${index + 1}.` });
+      }
+
+      const title = item.createEl("a", {
+        cls: "lgl-title internal-link is-unresolved",
+        text: name,
+        href: name,
+      });
+      title.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        this.app.workspace.openLinkText(name, file.path, Keymap.isModEvent(evt));
+      });
+
+      if (count > 1) {
+        const props = item.createDiv({ cls: "lgl-props" });
+        const row = props.createDiv({ cls: "lgl-prop lgl-mention-row" });
+        row
+          .createDiv({ cls: "lgl-prop-values" })
+          .createSpan({ cls: "lgl-value lgl-mention-count", text: `${count} links` });
+      }
+    });
   }
 
   /**
@@ -222,7 +268,10 @@ export class LocalGraphListView extends ItemView {
   /** Hover button that links the mention, first occurrence or all per the scope. */
   private renderAcceptButton(item: HTMLElement, mention: Mention, source: TFile): void {
     const scope = this.plugin.settings.mentionScope;
-    const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
+    const accept = item.createEl("button", {
+      cls: "clickable-icon lgl-accept",
+      attr: { type: "button" },
+    });
     setIcon(accept, "link");
     accept.setAttribute(
       "aria-label",
@@ -285,7 +334,10 @@ export class LocalGraphListView extends ItemView {
       text: file ? file.basename : "Nothing open",
     });
 
-    const sortButton = header.createDiv({ cls: "clickable-icon lgl-header-btn" });
+    const sortButton = header.createEl("button", {
+      cls: "clickable-icon lgl-header-btn",
+      attr: { type: "button" },
+    });
     setIcon(sortButton, "arrow-up-down");
     sortButton.setAttribute("aria-label", "Sort");
     sortButton.addEventListener("click", (evt) => this.openSortMenu(evt));
@@ -476,9 +528,10 @@ export class LocalGraphListView extends ItemView {
   }
 
   private renderTag(parent: HTMLElement, tag: string): void {
-    const el = parent.createSpan({
+    const el = parent.createEl("button", {
       cls: "lgl-value lgl-tag",
       text: tag.replace(/^#/, ""),
+      attr: { type: "button", "aria-label": `Search ${tag}` },
     });
     el.addEventListener("click", (evt) => {
       evt.preventDefault();

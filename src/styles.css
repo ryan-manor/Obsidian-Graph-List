@@ -100,6 +100,15 @@
   overflow-wrap: anywhere;
 }
 
+/* Real buttons, so they are reachable by keyboard and on touch, which means
+   undoing the styling a button brings with it. */
+.lgl-accept,
+.lgl-header-btn,
+.lgl-tag {
+  font: inherit;
+  box-shadow: none;
+}
+
 .lgl-tag {
   padding: 0 6px;
   border: 1px solid var(--background-modifier-border-hover);
@@ -156,6 +165,10 @@
   font-style: italic;
 }
 
+.lgl-unresolved .lgl-title {
+  font-style: italic;
+}
+
 .lgl-mention-count {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -167,6 +180,13 @@
   align-self: start;
   padding: 0 var(--size-2-2);
   opacity: 0;
+}
+
+/* Hover cannot reveal anything on a touch screen. */
+@media (hover: none) {
+  .lgl-accept {
+    opacity: 1;
+  }
 }
 
 .lgl-ghost:hover .lgl-accept,

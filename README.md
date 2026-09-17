@@ -13,6 +13,9 @@ underneath.
 
 - **Links to** / **Linked from** groups with counts, outbound first. Turn the
   split off for one flat, de-duplicated list.
+- **Unresolved**, links to notes that do not exist yet. Clicking one creates the
+  note, same as anywhere else in Obsidian. With these, the four surfaces this
+  replaces are all accounted for: outgoing, inbound, unlinked mentions, broken.
 - Any frontmatter property under each title. Empty values are skipped, so rows
   stay tight.
 - `sort`, a pseudo-property that always shows the value the list is ordered by,
@@ -23,6 +26,9 @@ underneath.
 - `file.*` pseudo-properties: `file.name`, `file.path`, `file.folder`,
   `file.ext`, `file.ctime`, `file.mtime`, `file.size`, `file.tags`.
 - Tags as clickable pills, wikilink values as working links.
+
+Every control is a real button, so the pane is usable from the keyboard, and the
+link button is always visible where there is no hover to reveal it.
 
 ## Controls
 

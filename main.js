@@ -905,6 +905,42 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
         this.renderMention(list, mention, file, group.files.length + index + 1);
       });
     });
+    this.renderUnresolved(contentEl, file);
+  }
+  /**
+   * Links to notes that do not exist. The outgoing pane keeps these in their
+   * own section, and without them this view cannot replace it. Clicking one
+   * creates the note, which is what Obsidian itself does.
+   */
+  renderUnresolved(parent, file) {
+    var _a;
+    const entries = Object.entries((_a = this.app.metadataCache.unresolvedLinks[file.path]) != null ? _a : {});
+    if (entries.length === 0) return;
+    entries.sort(([nameA, countA], [nameB, countB]) => countB - countA || nameA.localeCompare(nameB));
+    const header = parent.createDiv({ cls: "lgl-group-header" });
+    header.createSpan({ cls: "lgl-group-label", text: "Unresolved" });
+    header.createSpan({ cls: "lgl-group-count", text: String(entries.length) });
+    const list = parent.createDiv({ cls: "lgl-list" });
+    entries.forEach(([name, count], index) => {
+      const item = list.createDiv({ cls: "lgl-item lgl-unresolved" });
+      if (this.plugin.settings.showIndex) {
+        item.createSpan({ cls: "lgl-index", text: `${index + 1}.` });
+      }
+      const title = item.createEl("a", {
+        cls: "lgl-title internal-link is-unresolved",
+        text: name,
+        href: name
+      });
+      title.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        this.app.workspace.openLinkText(name, file.path, import_obsidian3.Keymap.isModEvent(evt));
+      });
+      if (count > 1) {
+        const props = item.createDiv({ cls: "lgl-props" });
+        const row = props.createDiv({ cls: "lgl-prop lgl-mention-row" });
+        row.createDiv({ cls: "lgl-prop-values" }).createSpan({ cls: "lgl-value lgl-mention-count", text: `${count} links` });
+      }
+    });
   }
   /**
    * A note this one names but does not link yet. Rendered in the same list so
@@ -945,7 +981,10 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
   renderAcceptButton(item, mention, source) {
     var _a, _b;
     const scope = this.plugin.settings.mentionScope;
-    const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
+    const accept = item.createEl("button", {
+      cls: "clickable-icon lgl-accept",
+      attr: { type: "button" }
+    });
     (0, import_obsidian3.setIcon)(accept, "link");
     accept.setAttribute(
       "aria-label",
@@ -995,7 +1034,10 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       cls: "lgl-header-title",
       text: file ? file.basename : "Nothing open"
     });
-    const sortButton = header.createDiv({ cls: "clickable-icon lgl-header-btn" });
+    const sortButton = header.createEl("button", {
+      cls: "clickable-icon lgl-header-btn",
+      attr: { type: "button" }
+    });
     (0, import_obsidian3.setIcon)(sortButton, "arrow-up-down");
     sortButton.setAttribute("aria-label", "Sort");
     sortButton.addEventListener("click", (evt) => this.openSortMenu(evt));
@@ -1127,9 +1169,10 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     return true;
   }
   renderTag(parent, tag) {
-    const el = parent.createSpan({
+    const el = parent.createEl("button", {
       cls: "lgl-value lgl-tag",
-      text: tag.replace(/^#/, "")
+      text: tag.replace(/^#/, ""),
+      attr: { type: "button", "aria-label": `Search ${tag}` }
     });
     el.addEventListener("click", (evt) => {
       var _a, _b;
