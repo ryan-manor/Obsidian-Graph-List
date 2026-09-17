@@ -98,7 +98,7 @@ export class LocalGraphListView extends ItemView {
     // Mentions need the file's text, so gather them before touching the DOM.
     // A newer render started while we waited wins.
     let mentions: Mention[] = [];
-    if (file && this.plugin.settings.showMentions) {
+    if (file?.extension === "md" && this.plugin.settings.showMentions) {
       mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
       if (token !== this.renderToken) return;
 

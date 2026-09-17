@@ -100,8 +100,10 @@ across 3 survive here. The filtering is structural, not a ranking:
   document, whichever name matched there.
 - Titles shorter than three characters are ignored, aliases shorter than two. An alias
   was written by hand to stand for the note, so a two-letter one like "Lr" is meant.
-- Frontmatter, code blocks, inline code, URLs, existing links and tags are skipped.
-  These are the places where linking would break the formatting.
+- Frontmatter, code blocks, inline code, math, comments, HTML, URLs, existing links and
+  tags are skipped. These are the places where linking would break the formatting.
+- Only markdown notes are scanned. A canvas or a base is JSON, where a note name inside a
+  file path would otherwise match and take a wikilink.
 - Targets this note already links are dropped in first-mention mode, so a note linked
   once does not keep suggesting itself for every other time it appears. They still own
   their names in overlap resolution.

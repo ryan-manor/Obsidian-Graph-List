@@ -155,6 +155,10 @@ export async function findUnlinkedMentions(
   file: TFile,
   index: MentionIndex
 ): Promise<Mention[]> {
+  // Only markdown has prose to mention anything. A canvas or a base is JSON,
+  // and note names inside its file paths would match and take a wikilink.
+  if (file.extension !== "md") return [];
+
   const text = await app.vault.cachedRead(file);
   const cache = app.metadataCache.getFileCache(file);
   return scanMentions(app, file, text, blockedRanges(text, cache), index);
@@ -307,11 +311,18 @@ export type Range = [number, number];
 const BLOCKED_PATTERNS = [
   /```[\s\S]*?(?:```|$)/g, // fenced code
   /`[^`\n]*`/g, // inline code
+  /\$\$[\s\S]*?(?:\$\$|$)/g, // display math
+  /%%[\s\S]*?(?:%%|$)/g, // comments
+  /<!--[\s\S]*?(?:-->|$)/g, // html comments
+  /<\/?[a-zA-Z][^>\n]*>/g, // html tags, so a name inside an attribute is safe
   /https?:\/\/[^\s)<>]+/g, // bare URLs
   /\[[^\]\n]*\]\([^)\n]*\)/g, // markdown links, both halves
   /\[\[[^\]\n]*\]\]/g, // wikilinks, including unresolved ones
   /#[\p{L}\p{N}/_-]+/gu, // tags
 ];
+
+/** Section types that are never prose. Callouts and lists are, so they match. */
+const BLOCKED_SECTIONS = new Set(["yaml", "code", "math", "html", "comment"]);
 
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---/;
 
@@ -324,7 +335,7 @@ export function blockedRanges(text: string, cache: CachedMetadata | null): Range
   const ranges: Range[] = [];
 
   for (const section of cache?.sections ?? []) {
-    if (section.type === "yaml" || section.type === "code") {
+    if (BLOCKED_SECTIONS.has(section.type)) {
       ranges.push([section.position.start.offset, section.position.end.offset]);
     }
   }

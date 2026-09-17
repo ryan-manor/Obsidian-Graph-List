@@ -556,6 +556,7 @@ function makeIgnoreTest(app) {
   return (path) => tests.some((test) => test(path));
 }
 async function findUnlinkedMentions(app, file, index) {
+  if (file.extension !== "md") return [];
   const text = await app.vault.cachedRead(file);
   const cache = app.metadataCache.getFileCache(file);
   return scanMentions(app, file, text, blockedRanges(text, cache), index);
@@ -638,6 +639,14 @@ var BLOCKED_PATTERNS = [
   // fenced code
   /`[^`\n]*`/g,
   // inline code
+  /\$\$[\s\S]*?(?:\$\$|$)/g,
+  // display math
+  /%%[\s\S]*?(?:%%|$)/g,
+  // comments
+  /<!--[\s\S]*?(?:-->|$)/g,
+  // html comments
+  /<\/?[a-zA-Z][^>\n]*>/g,
+  // html tags, so a name inside an attribute is safe
   /https?:\/\/[^\s)<>]+/g,
   // bare URLs
   /\[[^\]\n]*\]\([^)\n]*\)/g,
@@ -647,12 +656,13 @@ var BLOCKED_PATTERNS = [
   /#[\p{L}\p{N}/_-]+/gu
   // tags
 ];
+var BLOCKED_SECTIONS = /* @__PURE__ */ new Set(["yaml", "code", "math", "html", "comment"]);
 var FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---/;
 function blockedRanges(text, cache) {
   var _a, _b, _c;
   const ranges = [];
   for (const section of (_a = cache == null ? void 0 : cache.sections) != null ? _a : []) {
-    if (section.type === "yaml" || section.type === "code") {
+    if (BLOCKED_SECTIONS.has(section.type)) {
       ranges.push([section.position.start.offset, section.position.end.offset]);
     }
   }
@@ -769,7 +779,7 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     const token = ++this.renderToken;
     const file = this.getTargetFile();
     let mentions = [];
-    if (file && this.plugin.settings.showMentions) {
+    if ((file == null ? void 0 : file.extension) === "md" && this.plugin.settings.showMentions) {
       mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
       if (token !== this.renderToken) return;
       if (this.plugin.settings.mentionScope === "first") {
