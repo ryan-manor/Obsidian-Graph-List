@@ -35,8 +35,6 @@ export interface LocalGraphListSettings {
   showMentions: boolean;
   /** Whether the link button converts the first mention of a note or all of them. */
   mentionScope: MentionScope;
-  /** With scope "all", link new mentions of already-linked notes while editing. */
-  autoLink: boolean;
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
@@ -50,7 +48,6 @@ export const DEFAULT_SETTINGS: LocalGraphListSettings = {
   includeAttachments: false,
   showMentions: true,
   mentionScope: "first",
-  autoLink: false,
 };
 
 /** Pseudo-properties read off the file itself rather than frontmatter. */
@@ -376,21 +373,12 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           })
       );
 
-    if (settings.mentionScope !== "all") return;
-
     new Setting(containerEl)
-      .setName("Auto-link new mentions")
+      .setName("Linking every mention at once")
       .setDesc(
-        "Links mentions you write from here on, for notes this one already links. " +
-          "Mentions already in the note are left alone, the line you are typing on is skipped, " +
-          "and names under four characters are never written unprompted. Removing one of its " +
-          "links, or one of your own, stops it for that note until the plugin reloads."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(settings.autoLink).onChange(async (value) => {
-          settings.autoLink = value;
-          await this.commit();
-        })
+        "The command \u201cLink remaining mentions of linked notes\u201d converts every leftover " +
+          "mention of notes this one already links, in one undo step. Notes you have not linked " +
+          "yourself stay suggestions, with their own button."
       );
   }
 }

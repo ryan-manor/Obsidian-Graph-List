@@ -1,4 +1,4 @@
-import { App, Editor, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
 
 /**
  * Outbound unlinked mentions: text in this note that names another note but
@@ -463,12 +463,91 @@ function isBlocked(ranges: Range[], start: number, end: number): boolean {
   return false;
 }
 
+export interface LinkResult {
+  /** Occurrences turned into links. */
+  links: number;
+  /** Notes those links point at. */
+  notes: number;
+}
+
 /**
- * Link a target's mentions: the first one, or all of them. Occurrences are
- * re-derived from the note's current text with the same matcher the list uses,
- * rather than trusting offsets captured at render time, so an edit between
- * render and click cannot corrupt the note. Returns how many were linked.
+ * Link mentions in `source`, in one step. Occurrences are re-derived from the
+ * note's current text with the same matcher the list uses, rather than
+ * trusting offsets captured at render time, so an edit between render and
+ * click cannot corrupt the note.
+ *
+ * When the note is open the edit goes through the editor: it lands in one undo
+ * step, and keystrokes the editor has not saved yet cannot be clobbered by a
+ * disk-level write that never saw them.
  */
+export async function linkMentions(
+  app: App,
+  source: TFile,
+  index: MentionIndex,
+  scope: MentionScope,
+  select: (mention: Mention) => boolean
+): Promise<LinkResult> {
+  const groupsIn = (text: string): Group[] =>
+    scanMentions(app, source, text, blockedRanges(text), index)
+      .filter(select)
+      .map((mention) => ({ target: mention.file, spans: spansToLink(mention, scope) }))
+      .filter((group) => group.spans.length > 0);
+
+  const context = app.workspace.activeEditor;
+  const editor = context?.file?.path === source.path ? context.editor : null;
+
+  if (editor) {
+    const text = editor.getValue();
+    const groups = groupsIn(text);
+    if (groups.length === 0) return { links: 0, notes: 0 };
+
+    const changes = groups.flatMap((group) =>
+      group.spans.map((span) => ({
+        from: editor.offsetToPos(span.start),
+        to: editor.offsetToPos(span.end),
+        text: linkForSpan(app, source, group.target, text, span),
+      }))
+    );
+
+    editor.transaction({ changes });
+    return { links: changes.length, notes: groups.length };
+  }
+
+  // Nothing to link means nothing to write: `process` saves unconditionally,
+  // and a pointless save costs an mtime bump and a re-index.
+  if (groupsIn(await app.vault.cachedRead(source)).length === 0) return { links: 0, notes: 0 };
+
+  let result: LinkResult = { links: 0, notes: 0 };
+
+  await app.vault.process(source, (data) => {
+    const groups = groupsIn(data);
+    result = {
+      links: groups.reduce((total, group) => total + group.spans.length, 0),
+      notes: groups.length,
+    };
+
+    // Back to front, so earlier offsets stay valid as the text grows.
+    const edits = groups.flatMap((group) =>
+      group.spans.map((span) => ({ span, link: linkForSpan(app, source, group.target, data, span) }))
+    );
+    edits.sort((a, b) => b.span.start - a.span.start);
+
+    let text = data;
+    for (const { span, link } of edits) {
+      text = text.slice(0, span.start) + link + text.slice(span.end);
+    }
+    return text;
+  });
+
+  return result;
+}
+
+interface Group {
+  target: TFile;
+  spans: Span[];
+}
+
+/** One target's mentions, from the row's link button. Returns how many linked. */
 export async function linkMention(
   app: App,
   source: TFile,
@@ -476,70 +555,12 @@ export async function linkMention(
   index: MentionIndex,
   scope: MentionScope
 ): Promise<number> {
-  const context = app.workspace.activeEditor;
-  const editor = context?.file?.path === source.path ? context.editor : null;
-
-  // Through the editor when the note is open: the link lands in one undo step,
-  // and keystrokes the editor has not saved yet cannot be clobbered by a
-  // disk-level write that never saw them.
-  if (editor) return linkThroughEditor(app, source, target, index, scope, editor);
-
-  const preview = spansToConvert(app, source, await app.vault.cachedRead(source), target, index, scope);
-  if (preview.length === 0) return 0;
-
-  let linked = 0;
-
-  await app.vault.process(source, (data) => {
-    const spans = spansToConvert(app, source, data, target, index, scope);
-    linked = spans.length;
-    if (spans.length === 0) return data;
-
-    // Back to front, so earlier offsets stay valid as the text grows.
-    let result = data;
-    for (const span of [...spans].reverse()) {
-      const link = linkForSpan(app, source, target, data, span);
-      result = result.slice(0, span.start) + link + result.slice(span.end);
-    }
-    return result;
-  });
-
-  return linked;
-}
-
-function linkThroughEditor(
-  app: App,
-  source: TFile,
-  target: TFile,
-  index: MentionIndex,
-  scope: MentionScope,
-  editor: Editor
-): number {
-  const text = editor.getValue();
-  const spans = spansToConvert(app, source, text, target, index, scope);
-  if (spans.length === 0) return 0;
-
-  editor.transaction({
-    changes: spans.map((span) => ({
-      from: editor.offsetToPos(span.start),
-      to: editor.offsetToPos(span.end),
-      text: linkForSpan(app, source, target, text, span),
-    })),
-  });
-
-  return spans.length;
-}
-
-/** The spans of one target that a link action would convert, in `text`. */
-export function spansToConvert(
-  app: App,
-  source: TFile,
-  text: string,
-  target: TFile,
-  index: MentionIndex,
-  scope: MentionScope
-): Span[] {
-  const mention = scanMentions(app, source, text, blockedRanges(text), index).find(
-    (entry) => entry.file.path === target.path
+  const result = await linkMentions(
+    app,
+    source,
+    index,
+    scope,
+    (mention) => mention.file.path === target.path
   );
-  return mention ? spansToLink(mention, scope) : [];
+  return result.links;
 }

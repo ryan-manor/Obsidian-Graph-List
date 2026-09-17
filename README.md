@@ -1,6 +1,7 @@
-# Local Graph List
+# BetterLinks
 
-The local graph, rendered as a list instead of a force-directed blob.
+The local graph, rendered as a list instead of a force-directed blob, with the
+unlinked mentions pane folded into the same list.
 
 A sidebar is tall and narrow, so a graph canvas wastes most of it and a table
 view needs horizontal scrolling. This view takes the same data the local graph
@@ -25,8 +26,8 @@ underneath.
 
 ## Controls
 
-Everything is global, configured once under Settings → Community plugins → Local
-Graph List, with no per-note overrides. The sort control in the view header
+Everything is global, configured once under Settings → Community plugins →
+BetterLinks, with no per-note overrides. The sort control in the view header
 writes to the same settings.
 
 | Setting | What it does |
@@ -40,7 +41,6 @@ writes to the same settings.
 | Include attachments | Show linked images and PDFs alongside notes |
 | Show unlinked mentions | Append notes this one names but does not link |
 | Link | Whether the link button links the first mention or all of them |
-| Auto-link new mentions | With "All mentions", link new mentions of notes you already linked as you write |
 
 ## Ranking by graph proximity
 
@@ -80,17 +80,19 @@ The **Link** setting decides what the button converts:
 - **First mention** (default). Once a note is linked, its other mentions stay plain text.
 - **All mentions**. Every clean occurrence is linked. Mention a linked note again later and
   its row gets the button back with an "N unlinked mentions" count.
-- **Auto-link new mentions** (off by default, all mentions only). Mentions you write from
-  then on are linked on the next save, for notes this one already links. It never touches a
-  note you have not linked yourself, never touches mentions that were already in the note
-  when it first saw it, skips any line holding a cursor, and ignores names shorter than
-  four characters, since two- and three-letter aliases are the ambiguous ones. Removing one
-  of its links, or one of your own, stops it for that note until the plugin reloads.
+The command **Link remaining mentions of linked notes** does a whole note at once: every
+leftover mention of every note this one already links, in one undo step. Notes you have
+not linked yourself stay suggestions with their own button, so a bulk action never accepts
+a guess for you.
 
-The list, the button and auto-link run the same matcher over the same text, so they agree
-on what counts as a mention. Blocked ranges come from the text rather than the metadata
-cache for that reason: the button and auto-link work on text the cache has not parsed yet,
-where cache offsets would point at the wrong characters.
+An earlier version did this in the background as you typed. It was cut: a pane that also
+rewrites your prose unprompted is two tools sharing a manifest, and the command gets the
+same work done when you ask for it.
+
+The list and both link actions run the same matcher over the same text, so they agree on
+what counts as a mention. Blocked ranges come from the text rather than the metadata cache
+for that reason: the link actions work on text the cache has not parsed yet, where cache
+offsets would point at the wrong characters.
 
 When the note is open, the button edits through the editor, so its links land in one undo
 step and unsaved keystrokes cannot be lost.

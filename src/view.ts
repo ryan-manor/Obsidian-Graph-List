@@ -14,6 +14,10 @@ import { PROXIMITY_PROPERTY, SORT_PROPERTY, type SortKey } from "./settings";
 import { proximityScores } from "./ppr";
 import { findUnlinkedMentions, linkMention, type Mention } from "./mentions";
 
+/**
+ * Kept at the old plugin id on purpose: the view type is persisted in
+ * workspace.json, so changing it would orphan the pane people have open.
+ */
 export const VIEW_TYPE_LOCAL_GRAPH_LIST = "local-graph-list";
 
 const SORT_LABELS: Record<SortKey, string> = {
@@ -58,7 +62,7 @@ export class LocalGraphListView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Local graph list";
+    return "BetterLinks";
   }
 
   getIcon(): string {

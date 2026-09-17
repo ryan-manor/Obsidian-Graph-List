@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-local-graph-list",
+  "name": "obsidian-better-links",
   "version": "0.1.0",
-  "description": "Local graph as a list view",
+  "description": "The local graph as a ranked list, with unlinked mentions",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

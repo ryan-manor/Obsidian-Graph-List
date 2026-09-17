@@ -8,9 +8,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key2 of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key2) && key2 !== except)
-        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
   }
   return to;
 };
@@ -38,8 +38,7 @@ var DEFAULT_SETTINGS = {
   showIndex: true,
   includeAttachments: false,
   showMentions: true,
-  mentionScope: "first",
-  autoLink: false
+  mentionScope: "first"
 };
 var FILE_PROPERTIES = [
   "file.name",
@@ -62,7 +61,7 @@ function getAllPropertyKeys(app) {
   } else {
     for (const file of app.vault.getMarkdownFiles()) {
       const fm = (_b = app.metadataCache.getFileCache(file)) == null ? void 0 : _b.frontmatter;
-      if (fm) for (const key2 of Object.keys(fm)) keys.add(key2);
+      if (fm) for (const key of Object.keys(fm)) keys.add(key);
     }
   }
   return [...keys].sort((a, b) => a.localeCompare(b));
@@ -74,14 +73,14 @@ var PropertySuggest = class extends import_obsidian.AbstractInputSuggest {
   }
   getSuggestions(query) {
     const q = query.toLowerCase();
-    return getAllPropertyKeys(this.app).filter((key2) => key2.toLowerCase().includes(q)).slice(0, 20);
+    return getAllPropertyKeys(this.app).filter((key) => key.toLowerCase().includes(q)).slice(0, 20);
   }
-  renderSuggestion(key2, el) {
-    el.setText(key2);
+  renderSuggestion(key, el) {
+    el.setText(key);
   }
-  selectSuggestion(key2) {
-    this.setValue(key2);
-    this.onPick(key2);
+  selectSuggestion(key) {
+    this.setValue(key);
+    this.onPick(key);
     this.close();
   }
 };
@@ -130,8 +129,8 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
           this.plugin.settings.sortProperty = value.trim();
           await this.commit();
         });
-        new PropertySuggest(this.app, text.inputEl, async (key2) => {
-          this.plugin.settings.sortProperty = key2;
+        new PropertySuggest(this.app, text.inputEl, async (key) => {
+          this.plugin.settings.sortProperty = key;
           await this.commit();
         });
       });
@@ -182,8 +181,8 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
           properties[index] = value.trim();
           await this.commit();
         });
-        new PropertySuggest(this.app, text.inputEl, async (key2) => {
-          properties[index] = key2;
+        new PropertySuggest(this.app, text.inputEl, async (key) => {
+          properties[index] = key;
           await this.commit();
         });
       });
@@ -244,14 +243,8 @@ var LocalGraphListSettingTab = class extends import_obsidian.PluginSettingTab {
         this.display();
       })
     );
-    if (settings.mentionScope !== "all") return;
-    new import_obsidian.Setting(containerEl).setName("Auto-link new mentions").setDesc(
-      "Links mentions you write from here on, for notes this one already links. Mentions already in the note are left alone, the line you are typing on is skipped, and names under four characters are never written unprompted. Removing one of its links, or one of your own, stops it for that note until the plugin reloads."
-    ).addToggle(
-      (toggle) => toggle.setValue(settings.autoLink).onChange(async (value) => {
-        settings.autoLink = value;
-        await this.commit();
-      })
+    new import_obsidian.Setting(containerEl).setName("Linking every mention at once").setDesc(
+      "The command \u201CLink remaining mentions of linked notes\u201D converts every leftover mention of notes this one already links, in one undo step. Notes you have not linked yourself stay suggestions, with their own button."
     );
   }
 };
@@ -317,9 +310,9 @@ function resolveSortProperty(settings) {
       return null;
   }
 }
-function getPropertyValue(app, file, key2) {
+function getPropertyValue(app, file, key) {
   var _a, _b, _c, _d, _e, _f;
-  switch (key2) {
+  switch (key) {
     case "file.name":
       return file.basename;
     case "file.path":
@@ -337,7 +330,7 @@ function getPropertyValue(app, file, key2) {
     case "file.tags":
       return (_d = (0, import_obsidian2.getAllTags)((_c = app.metadataCache.getFileCache(file)) != null ? _c : {})) != null ? _d : [];
   }
-  return (_f = (_e = app.metadataCache.getFileCache(file)) == null ? void 0 : _e.frontmatter) == null ? void 0 : _f[key2];
+  return (_f = (_e = app.metadataCache.getFileCache(file)) == null ? void 0 : _e.frontmatter) == null ? void 0 : _f[key];
 }
 function unwrapLink(value) {
   const match = value.match(/^!?\[\[([^\]]+)\]\]$/);
@@ -515,9 +508,9 @@ function buildMentionIndex(app) {
     if (ignored(file.path)) continue;
     const name = (_d = suggestion.alias) != null ? _d : file.basename;
     if (name.length < (suggestion.alias ? MIN_ALIAS_LENGTH : MIN_TITLE_LENGTH)) continue;
-    const key2 = `${file.path}\0${name}`;
-    if (seen.has(key2)) continue;
-    seen.add(key2);
+    const key = `${file.path}\0${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const lower = name.toLowerCase();
     const first = (_e = lower.match(WORD)) == null ? void 0 : _e[0];
     if (!first) continue;
@@ -750,45 +743,54 @@ function isBlocked(ranges, start, end) {
   }
   return false;
 }
-async function linkMention(app, source, target, index, scope) {
+async function linkMentions(app, source, index, scope, select) {
   var _a;
+  const groupsIn = (text) => scanMentions(app, source, text, blockedRanges(text), index).filter(select).map((mention) => ({ target: mention.file, spans: spansToLink(mention, scope) })).filter((group) => group.spans.length > 0);
   const context = app.workspace.activeEditor;
   const editor = ((_a = context == null ? void 0 : context.file) == null ? void 0 : _a.path) === source.path ? context.editor : null;
-  if (editor) return linkThroughEditor(app, source, target, index, scope, editor);
-  const preview = spansToConvert(app, source, await app.vault.cachedRead(source), target, index, scope);
-  if (preview.length === 0) return 0;
-  let linked = 0;
+  if (editor) {
+    const text = editor.getValue();
+    const groups = groupsIn(text);
+    if (groups.length === 0) return { links: 0, notes: 0 };
+    const changes = groups.flatMap(
+      (group) => group.spans.map((span) => ({
+        from: editor.offsetToPos(span.start),
+        to: editor.offsetToPos(span.end),
+        text: linkForSpan(app, source, group.target, text, span)
+      }))
+    );
+    editor.transaction({ changes });
+    return { links: changes.length, notes: groups.length };
+  }
+  if (groupsIn(await app.vault.cachedRead(source)).length === 0) return { links: 0, notes: 0 };
+  let result = { links: 0, notes: 0 };
   await app.vault.process(source, (data) => {
-    const spans = spansToConvert(app, source, data, target, index, scope);
-    linked = spans.length;
-    if (spans.length === 0) return data;
-    let result = data;
-    for (const span of [...spans].reverse()) {
-      const link = linkForSpan(app, source, target, data, span);
-      result = result.slice(0, span.start) + link + result.slice(span.end);
+    const groups = groupsIn(data);
+    result = {
+      links: groups.reduce((total, group) => total + group.spans.length, 0),
+      notes: groups.length
+    };
+    const edits = groups.flatMap(
+      (group) => group.spans.map((span) => ({ span, link: linkForSpan(app, source, group.target, data, span) }))
+    );
+    edits.sort((a, b) => b.span.start - a.span.start);
+    let text = data;
+    for (const { span, link } of edits) {
+      text = text.slice(0, span.start) + link + text.slice(span.end);
     }
-    return result;
+    return text;
   });
-  return linked;
+  return result;
 }
-function linkThroughEditor(app, source, target, index, scope, editor) {
-  const text = editor.getValue();
-  const spans = spansToConvert(app, source, text, target, index, scope);
-  if (spans.length === 0) return 0;
-  editor.transaction({
-    changes: spans.map((span) => ({
-      from: editor.offsetToPos(span.start),
-      to: editor.offsetToPos(span.end),
-      text: linkForSpan(app, source, target, text, span)
-    }))
-  });
-  return spans.length;
-}
-function spansToConvert(app, source, text, target, index, scope) {
-  const mention = scanMentions(app, source, text, blockedRanges(text), index).find(
-    (entry) => entry.file.path === target.path
+async function linkMention(app, source, target, index, scope) {
+  const result = await linkMentions(
+    app,
+    source,
+    index,
+    scope,
+    (mention) => mention.file.path === target.path
   );
-  return mention ? spansToLink(mention, scope) : [];
+  return result.links;
 }
 
 // src/view.ts
@@ -800,8 +802,8 @@ var SORT_LABELS = {
   property: "Property",
   title: "Title"
 };
-function normalizeTags(key2, value) {
-  if (key2 !== "tags" && key2 !== "file.tags") return value;
+function normalizeTags(key, value) {
+  if (key !== "tags" && key !== "file.tags") return value;
   const hash = (entry) => typeof entry === "string" && entry && !entry.startsWith("#") ? `#${entry}` : entry;
   return Array.isArray(value) ? value.map(hash) : hash(value);
 }
@@ -823,7 +825,7 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     return VIEW_TYPE_LOCAL_GRAPH_LIST;
   }
   getDisplayText() {
-    return "Local graph list";
+    return "BetterLinks";
   }
   getIcon() {
     return "list-tree";
@@ -1001,12 +1003,12 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
   openSortMenu(evt) {
     const menu = new import_obsidian3.Menu();
     const { settings } = this.plugin;
-    for (const key2 of Object.keys(SORT_LABELS)) {
+    for (const key of Object.keys(SORT_LABELS)) {
       menu.addItem(
         (item) => item.setTitle(
-          key2 === "property" && settings.sortProperty ? `Property: ${settings.sortProperty}` : SORT_LABELS[key2]
-        ).setChecked(settings.sortKey === key2).onClick(async () => {
-          settings.sortKey = key2;
+          key === "property" && settings.sortProperty ? `Property: ${settings.sortProperty}` : SORT_LABELS[key]
+        ).setChecked(settings.sortKey === key).onClick(async () => {
+          settings.sortKey = key;
           await this.plugin.saveSettings();
           this.plugin.refreshViews();
         })
@@ -1069,12 +1071,12 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     const props = this.plugin.settings.properties.filter(Boolean);
     const propsEl = item.createDiv({ cls: "lgl-props" });
     for (const prop of props) {
-      const key2 = prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
-      if (!key2) continue;
-      const value = key2 === PROXIMITY_PROPERTY ? (_a = proximity.get(file.path)) == null ? void 0 : _a.toFixed(2) : normalizeTags(key2, getPropertyValue(this.app, file, key2));
+      const key = prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
+      if (!key) continue;
+      const value = key === PROXIMITY_PROPERTY ? (_a = proximity.get(file.path)) == null ? void 0 : _a.toFixed(2) : normalizeTags(key, getPropertyValue(this.app, file, key));
       const row = propsEl.createDiv({ cls: "lgl-prop" });
       if (this.plugin.settings.showPropertyNames) {
-        row.createSpan({ cls: "lgl-prop-name", text: key2 });
+        row.createSpan({ cls: "lgl-prop-name", text: key });
       }
       const values = row.createDiv({ cls: "lgl-prop-values" });
       if (!this.renderValue(values, value, source.path)) row.remove();
@@ -1152,105 +1154,6 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
   }
 };
 
-// src/autolink.ts
-var MIN_AUTO_NAME_LENGTH = 4;
-var AutoLinker = class {
-  constructor(plugin) {
-    this.plugin = plugin;
-    /** Fewest links each auto-linked target should have, from the last auto-link on. */
-    this.expected = /* @__PURE__ */ new Map();
-    /** Targets the user unlinked, per source note. */
-    this.declined = /* @__PURE__ */ new Set();
-    /** Lines each note had when first scanned. Anything else was written since. */
-    this.baseline = /* @__PURE__ */ new Map();
-  }
-  /** Runs on the metadata cache's per-file `resolve`, when link counts are fresh. */
-  onResolve(file) {
-    var _a, _b, _c;
-    const { app, settings } = this.plugin;
-    if (!settings.showMentions || settings.mentionScope !== "all" || !settings.autoLink) {
-      return;
-    }
-    const context = app.workspace.activeEditor;
-    const editor = context == null ? void 0 : context.editor;
-    if (!editor || ((_a = context.file) == null ? void 0 : _a.path) !== file.path || !editor.hasFocus()) return;
-    const counts = (_b = app.metadataCache.resolvedLinks[file.path]) != null ? _b : {};
-    this.noteDeclines(file, counts);
-    const text = editor.getValue();
-    const lines = new Set(text.split("\n"));
-    const known = this.baseline.get(file.path);
-    if (!known) {
-      this.baseline.set(file.path, lines);
-      return;
-    }
-    const mentions = scanMentions(
-      app,
-      file,
-      text,
-      blockedRanges(text),
-      this.plugin.getMentionIndex()
-    ).filter((mention) => mention.linked && !this.declined.has(key(file, mention.file)));
-    if (mentions.length === 0) return;
-    const busy = editor.listSelections().map(({ anchor, head }) => [
-      Math.min(anchor.line, head.line),
-      Math.max(anchor.line, head.line)
-    ]);
-    const written = (line) => !known.has(editor.getLine(line));
-    const changes = [];
-    for (const mention of mentions) {
-      let added = 0;
-      for (const span of mention.spans) {
-        if (span.name.length < MIN_AUTO_NAME_LENGTH) continue;
-        const from = editor.offsetToPos(span.start);
-        if (busy.some(([first, last]) => from.line >= first && from.line <= last)) continue;
-        if (!written(from.line)) continue;
-        changes.push({
-          from,
-          to: editor.offsetToPos(span.end),
-          text: linkForSpan(app, file, mention.file, text, span)
-        });
-        added += 1;
-      }
-      if (added > 0) {
-        this.expected.set(key(file, mention.file), {
-          count: ((_c = counts[mention.file.path]) != null ? _c : 0) + added,
-          at: Date.now()
-        });
-      }
-    }
-    if (changes.length > 0) editor.transaction({ changes });
-  }
-  /**
-   * A target whose link count drops was unlinked on purpose, whether by undo
-   * straight away or by deleting a link later. Every linked target is tracked,
-   * not just ones auto-link wrote, so removing a link you made by hand also
-   * counts as intent. A count recorded right after an auto-link is only
-   * trusted once the file has been written since, so a resolve that still
-   * reflects the pre-edit text is not mistaken for a deletion.
-   */
-  noteDeclines(file, counts) {
-    const prefix = `${file.path}\0`;
-    for (const target of Object.keys(counts)) {
-      const id = prefix + target;
-      const expected = this.expected.get(id);
-      if (!expected) {
-        this.expected.set(id, { count: counts[target], at: 0 });
-        continue;
-      }
-      if (expected.at > 0 && file.stat.mtime <= expected.at) continue;
-      if (counts[target] < expected.count) {
-        this.declined.add(id);
-        this.expected.delete(id);
-      } else {
-        this.expected.set(id, { count: counts[target], at: 0 });
-      }
-    }
-  }
-};
-function key(source, target) {
-  return `${source.path}\0${target.path}`;
-}
-
 // src/main.ts
 var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
   constructor() {
@@ -1267,21 +1170,27 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       VIEW_TYPE_LOCAL_GRAPH_LIST,
       (leaf) => new LocalGraphListView(leaf, this)
     );
-    this.addRibbonIcon("list-tree", "Local graph list", () => this.activateView());
+    this.addRibbonIcon("list-tree", "BetterLinks", () => this.activateView());
     this.addCommand({
       id: "open",
-      name: "Open local graph list",
+      name: "Open links pane",
       callback: () => this.activateView()
+    });
+    this.addCommand({
+      id: "link-mentions",
+      name: "Link remaining mentions of linked notes",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if ((file == null ? void 0 : file.extension) !== "md") return false;
+        if (!checking) void this.linkMentionsIn(file);
+        return true;
+      }
     });
     this.registerEvent(
       this.app.metadataCache.on("resolved", () => {
         this.adjacency = null;
         this.mentionIndex = null;
       })
-    );
-    const autoLinker = new AutoLinker(this);
-    this.registerEvent(
-      this.app.metadataCache.on("resolve", (file) => autoLinker.onResolve(file))
     );
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));
   }
@@ -1311,6 +1220,29 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       this.mentionIndex = buildMentionIndex(this.app);
     }
     return this.mentionIndex;
+  }
+  /**
+   * Link every leftover mention of notes this one already links, in one undo
+   * step. Scoped to notes you have linked yourself, so a bulk action never
+   * acts on a suggestion you have not accepted.
+   */
+  async linkMentionsIn(file) {
+    try {
+      const { links, notes } = await linkMentions(
+        this.app,
+        file,
+        this.getMentionIndex(),
+        "all",
+        (mention) => mention.linked
+      );
+      new import_obsidian4.Notice(
+        links === 0 ? "No unlinked mentions of linked notes here." : `Linked ${links} mention${links === 1 ? "" : "s"} across ${notes} note${notes === 1 ? "" : "s"}.`
+      );
+      this.refreshViews();
+    } catch (error) {
+      console.error("BetterLinks: linking mentions failed", error);
+      new import_obsidian4.Notice("Could not link mentions.");
+    }
   }
   /** Re-render every open instance after a settings change. */
   refreshViews() {

@@ -1,9 +1,9 @@
 {
-  "id": "local-graph-list",
-  "name": "Local Graph List",
+  "id": "better-links",
+  "name": "BetterLinks",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
-  "description": "The local graph as a Bases-style list: inbound and outbound links with the properties you care about, sorted how you want.",
+  "description": "The local graph as a ranked list, with unlinked mentions you can link from the same pane.",
   "author": "Ryan Manor",
   "isDesktopOnly": false
 }

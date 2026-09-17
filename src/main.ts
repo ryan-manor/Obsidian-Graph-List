@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import {
   DEFAULT_SETTINGS,
   LocalGraphListSettingTab,
@@ -6,8 +6,7 @@ import {
 } from "./settings";
 import { LocalGraphListView, VIEW_TYPE_LOCAL_GRAPH_LIST } from "./view";
 import { buildAdjacency, type AdjMap } from "./ppr";
-import { buildMentionIndex, type MentionIndex } from "./mentions";
-import { AutoLinker } from "./autolink";
+import { buildMentionIndex, linkMentions, type MentionIndex } from "./mentions";
 
 export default class LocalGraphListPlugin extends Plugin {
   settings: LocalGraphListSettings = DEFAULT_SETTINGS;
@@ -26,12 +25,23 @@ export default class LocalGraphListPlugin extends Plugin {
       (leaf) => new LocalGraphListView(leaf, this)
     );
 
-    this.addRibbonIcon("list-tree", "Local graph list", () => this.activateView());
+    this.addRibbonIcon("list-tree", "BetterLinks", () => this.activateView());
 
     this.addCommand({
       id: "open",
-      name: "Open local graph list",
+      name: "Open links pane",
       callback: () => this.activateView(),
+    });
+
+    this.addCommand({
+      id: "link-mentions",
+      name: "Link remaining mentions of linked notes",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (file?.extension !== "md") return false;
+        if (!checking) void this.linkMentionsIn(file);
+        return true;
+      },
     });
 
     this.registerEvent(
@@ -39,11 +49,6 @@ export default class LocalGraphListPlugin extends Plugin {
         this.adjacency = null;
         this.mentionIndex = null;
       })
-    );
-
-    const autoLinker = new AutoLinker(this);
-    this.registerEvent(
-      this.app.metadataCache.on("resolve", (file) => autoLinker.onResolve(file))
     );
 
     this.addSettingTab(new LocalGraphListSettingTab(this.app, this));
@@ -82,6 +87,33 @@ export default class LocalGraphListPlugin extends Plugin {
       this.mentionIndex = buildMentionIndex(this.app);
     }
     return this.mentionIndex;
+  }
+
+  /**
+   * Link every leftover mention of notes this one already links, in one undo
+   * step. Scoped to notes you have linked yourself, so a bulk action never
+   * acts on a suggestion you have not accepted.
+   */
+  private async linkMentionsIn(file: TFile): Promise<void> {
+    try {
+      const { links, notes } = await linkMentions(
+        this.app,
+        file,
+        this.getMentionIndex(),
+        "all",
+        (mention) => mention.linked
+      );
+
+      new Notice(
+        links === 0
+          ? "No unlinked mentions of linked notes here."
+          : `Linked ${links} mention${links === 1 ? "" : "s"} across ${notes} note${notes === 1 ? "" : "s"}.`
+      );
+      this.refreshViews();
+    } catch (error) {
+      console.error("BetterLinks: linking mentions failed", error);
+      new Notice("Could not link mentions.");
+    }
   }
 
   /** Re-render every open instance after a settings change. */
