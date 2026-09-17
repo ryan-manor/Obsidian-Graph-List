@@ -96,7 +96,10 @@ across 3 survive here. The filtering is structural, not a ranking:
 
 - Whole words only, so `Bases-style` is not a mention of "Style Understanding Home".
 - Longest match wins an overlap, so the alias "Lightroom" cannot claim the tail of
-  "Adobe Lightroom" and strand the first word.
+  "Adobe Lightroom" and strand the first word. "First mention" then means first in the
+  document, whichever name matched there.
+- Titles shorter than three characters are ignored, aliases shorter than two. An alias
+  was written by hand to stand for the note, so a two-letter one like "Lr" is meant.
 - Frontmatter, code blocks, inline code, URLs, existing links and tags are skipped.
   These are the places where linking would break the formatting.
 - Targets this note already links are dropped in first-mention mode, so a note linked

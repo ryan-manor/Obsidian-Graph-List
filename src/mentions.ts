@@ -21,6 +21,8 @@ export interface Mention {
   file: TFile;
   /** Longest matched name, which is an alias when the match came from one. */
   name: string;
+  /** Distinct names that matched, in the order they first appear. */
+  names: string[];
   /** Clean unlinked occurrences, under any of the target's names. */
   count: number;
   /** Whether this note already links to the target somewhere. */
@@ -54,7 +56,13 @@ interface LinkSuggestion {
   alias?: string;
 }
 
-const MIN_NAME_LENGTH = 3;
+/**
+ * Titles this short are usually stubs or initials that collide with prose.
+ * An alias is different: it was written by hand to stand for this note, so a
+ * two-letter one like "Lr" is meant, and whole-word matching keeps it honest.
+ */
+const MIN_TITLE_LENGTH = 3;
+const MIN_ALIAS_LENGTH = 2;
 
 /** Letters, digits and the joiners that make a hyphenated or snake-cased word one word. */
 const WORD_CHAR = /[\p{L}\p{N}_-]/u;
@@ -81,7 +89,7 @@ export function buildMentionIndex(app: App): MentionIndex {
     if (ignored(file.path)) continue;
 
     const name = suggestion.alias ?? file.basename;
-    if (name.length < MIN_NAME_LENGTH) continue;
+    if (name.length < (suggestion.alias ? MIN_ALIAS_LENGTH : MIN_TITLE_LENGTH)) continue;
 
     const key = `${file.path}\u0000${name}`;
     if (seen.has(key)) continue;
@@ -204,6 +212,7 @@ export function scanMentions(
       found.set(hit.candidate.file.path, {
         file: hit.candidate.file,
         name: hit.candidate.name,
+        names: [],
         count: 0,
         linked: linked.has(hit.candidate.file.path),
         spans: [span],
@@ -214,6 +223,7 @@ export function scanMentions(
   for (const mention of found.values()) {
     mention.spans.sort((a, b) => a.start - b.start);
     mention.count = mention.spans.length;
+    mention.names = [...new Set(mention.spans.map((span) => span.name))];
   }
 
   return [...found.values()].sort(
@@ -225,14 +235,14 @@ export function scanMentions(
 }
 
 /**
- * The spans a link action converts. "first" keeps the original rule: the first
- * occurrence of the longest name, so an earlier bare alias does not win over
- * the full title.
+ * The spans a link action converts. "first" means first in the document,
+ * whichever of the target's names matched there. Overlap resolution has
+ * already made sure that span is the longest match at that spot, so an alias
+ * cannot take a bite out of a longer title.
  */
 export function spansToLink(mention: Mention, scope: MentionScope): Span[] {
   if (scope === "all") return mention.spans;
-  const first = mention.spans.find((span) => span.name === mention.name);
-  return first ? [first] : [];
+  return mention.spans.slice(0, 1);
 }
 
 /**

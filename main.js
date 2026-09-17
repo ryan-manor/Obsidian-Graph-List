@@ -499,7 +499,8 @@ function proximityScores(adj, source) {
 }
 
 // src/mentions.ts
-var MIN_NAME_LENGTH = 3;
+var MIN_TITLE_LENGTH = 3;
+var MIN_ALIAS_LENGTH = 2;
 var WORD_CHAR = /[\p{L}\p{N}_-]/u;
 var WORD = /[\p{L}\p{N}]+/gu;
 function buildMentionIndex(app) {
@@ -513,7 +514,7 @@ function buildMentionIndex(app) {
     if (!file || file.extension !== "md") continue;
     if (ignored(file.path)) continue;
     const name = (_d = suggestion.alias) != null ? _d : file.basename;
-    if (name.length < MIN_NAME_LENGTH) continue;
+    if (name.length < (suggestion.alias ? MIN_ALIAS_LENGTH : MIN_TITLE_LENGTH)) continue;
     const key2 = `${file.path}\0${name}`;
     if (seen.has(key2)) continue;
     seen.add(key2);
@@ -588,6 +589,7 @@ function scanMentions(app, source, text, blocked, index) {
       found.set(hit.candidate.file.path, {
         file: hit.candidate.file,
         name: hit.candidate.name,
+        names: [],
         count: 0,
         linked: linked.has(hit.candidate.file.path),
         spans: [span]
@@ -597,6 +599,7 @@ function scanMentions(app, source, text, blocked, index) {
   for (const mention of found.values()) {
     mention.spans.sort((a, b) => a.start - b.start);
     mention.count = mention.spans.length;
+    mention.names = [...new Set(mention.spans.map((span) => span.name))];
   }
   return [...found.values()].sort(
     (a, b) => b.count - a.count || b.name.length - a.name.length || a.file.basename.localeCompare(b.file.basename)
@@ -604,8 +607,7 @@ function scanMentions(app, source, text, blocked, index) {
 }
 function spansToLink(mention, scope) {
   if (scope === "all") return mention.spans;
-  const first = mention.spans.find((span) => span.name === mention.name);
-  return first ? [first] : [];
+  return mention.spans.slice(0, 1);
 }
 function linkForSpan(app, source, target, text, span) {
   const shown = text.slice(span.start, span.end);
@@ -854,12 +856,13 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
   }
   /** Hover button that links the mention, first occurrence or all per the scope. */
   renderAcceptButton(item, mention, source) {
+    var _a, _b;
     const scope = this.plugin.settings.mentionScope;
     const accept = item.createDiv({ cls: "clickable-icon lgl-accept" });
     (0, import_obsidian3.setIcon)(accept, "link");
     accept.setAttribute(
       "aria-label",
-      scope === "all" && mention.count > 1 ? `Link all ${mention.count} mentions` : `Link "${mention.name}"`
+      scope === "all" && mention.count > 1 ? `Link all ${mention.count} mentions` : `Link "${(_b = (_a = mention.spans[0]) == null ? void 0 : _a.name) != null ? _b : mention.name}"`
     );
     accept.addEventListener("click", async (evt) => {
       evt.preventDefault();
@@ -883,8 +886,9 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
       cls: "lgl-value lgl-mention-count",
       text: `${mention.count} ${noun}${mention.count === 1 ? "" : "s"}`
     });
-    if (mention.name !== mention.file.basename) {
-      values.createSpan({ cls: "lgl-value lgl-pill", text: mention.name });
+    for (const name of mention.names.slice(0, 3)) {
+      if (name === mention.file.basename) continue;
+      values.createSpan({ cls: "lgl-value lgl-pill", text: name });
     }
   }
   renderHeader(parent, file) {

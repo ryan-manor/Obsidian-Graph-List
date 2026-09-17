@@ -223,7 +223,7 @@ export class LocalGraphListView extends ItemView {
       "aria-label",
       scope === "all" && mention.count > 1
         ? `Link all ${mention.count} mentions`
-        : `Link "${mention.name}"`
+        : `Link "${mention.spans[0]?.name ?? mention.name}"`
     );
     accept.addEventListener("click", async (evt) => {
       evt.preventDefault();
@@ -250,8 +250,11 @@ export class LocalGraphListView extends ItemView {
       text: `${mention.count} ${noun}${mention.count === 1 ? "" : "s"}`,
     });
 
-    if (mention.name !== mention.file.basename) {
-      values.createSpan({ cls: "lgl-value lgl-pill", text: mention.name });
+    // Which text matched, so an alias match is not a mystery. Capped, since a
+    // note can carry more aliases than the row has room for.
+    for (const name of mention.names.slice(0, 3)) {
+      if (name === mention.file.basename) continue;
+      values.createSpan({ cls: "lgl-value lgl-pill", text: name });
     }
   }
 
