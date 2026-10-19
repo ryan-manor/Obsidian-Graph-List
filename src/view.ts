@@ -283,6 +283,10 @@ export class LocalGraphListView extends ItemView {
       evt.preventDefault();
       evt.stopPropagation();
 
+      // One link at a time per row: a double click would otherwise link the
+      // first mention and then the next one.
+      if (accept.disabled) return;
+
       // The rows outlive a file switch by the render debounce, so check the
       // click is still for the note on screen before writing to it.
       if (this.getTargetFile()?.path !== source.path) {
@@ -290,6 +294,7 @@ export class LocalGraphListView extends ItemView {
         return;
       }
 
+      accept.disabled = true;
       try {
         const linked = await linkMention(
           this.app,
@@ -303,6 +308,8 @@ export class LocalGraphListView extends ItemView {
       } catch (error) {
         console.error("Graph List: linking failed", error);
         new Notice(`Could not link "${mention.file.basename}".`);
+      } finally {
+        accept.disabled = false;
       }
     });
   }

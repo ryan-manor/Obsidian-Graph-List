@@ -100,8 +100,9 @@ what counts as a mention. Blocked ranges come from the text rather than the meta
 for that reason: the link actions work on text the cache has not parsed yet, where cache
 offsets would point at the wrong characters.
 
-When the note is open, the button edits through the editor, so its links land in one undo
-step and unsaved keystrokes cannot be lost.
+When the note is open in any pane, split or popout window, the button edits through that
+editor, so its links land in one undo step and unsaved keystrokes cannot be lost. Only a
+note that is not open anywhere is written on disk.
 
 Matching is case-insensitive like Obsidian's own, so a lowercase "style" still nudges
 towards the Style page. What differs is everything around the match. Obsidian renders
@@ -114,8 +115,10 @@ across 3 survive here. The filtering is structural, not a ranking:
   document, whichever name matched there.
 - Titles shorter than three characters are ignored, aliases shorter than two. An alias
   was written by hand to stand for the note, so a two-letter one like "Lr" is meant.
-- Frontmatter, code blocks, inline code, math, comments, HTML, URLs, existing links and
-  tags are skipped. These are the places where linking would break the formatting.
+- Frontmatter, code blocks (including ones inside callouts and list items), inline code,
+  math, comments, HTML, URLs, existing links, reference links, footnote markers, link
+  definitions and tags are skipped. These are the places where linking would break the
+  formatting. In a table row the alias pipe is escaped, so the link does not split the cell.
 - Only markdown notes are scanned. A canvas or a base is JSON, where a note name inside a
   file path would otherwise match and take a wikilink.
 - Targets this note already links are dropped in first-mention mode, so a note linked

@@ -23,3 +23,20 @@ export function getAllTags(cache: {
 }): string[] | null {
   return cache.frontmatter?.tags?.map((tag) => `#${tag}`) ?? null;
 }
+
+export class MarkdownView {}
+
+export function parseFrontMatterAliases(
+  frontmatter: { aliases?: unknown } | undefined | null
+): string[] | null {
+  const aliases = frontmatter?.aliases;
+  if (typeof aliases === "string") return [aliases];
+  return Array.isArray(aliases) ? (aliases as string[]) : null;
+}
+
+export function debounce<T extends unknown[]>(callback: (...args: T) => unknown) {
+  const run = (...args: T) => void callback(...args);
+  run.cancel = () => run;
+  run.run = () => undefined;
+  return run;
+}

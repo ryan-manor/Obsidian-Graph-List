@@ -1,4 +1,4 @@
-import { App, TFile } from "obsidian";
+import { App, Editor, MarkdownView, TFile, parseFrontMatterAliases } from "obsidian";
 
 /**
  * Outbound unlinked mentions: text in this note that names another note but
@@ -78,10 +78,7 @@ export function buildMentionIndex(app: App): MentionIndex {
   const seen = new Set<string>();
   const ignored = makeIgnoreTest(app);
 
-  const suggestions =
-    (app.metadataCache as unknown as {
-      getLinkSuggestions?: () => LinkSuggestion[];
-    }).getLinkSuggestions?.() ?? [];
+  const suggestions = linkSuggestions(app);
 
   for (const suggestion of suggestions) {
     const file = suggestion.file;
@@ -95,7 +92,8 @@ export function buildMentionIndex(app: App): MentionIndex {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const lower = name.toLowerCase();
+    // The same lowercasing as the text, so a match is exactly as long as the name.
+    const lower = toLowerKeepingOffsets(name);
     const first = lower.match(WORD)?.[0];
     if (!first) continue;
 
@@ -107,6 +105,28 @@ export function buildMentionIndex(app: App): MentionIndex {
   }
 
   return index;
+}
+
+/**
+ * Every title and alias, from the link suggester when the app has it. That
+ * method is private, so fall back to the public file list and frontmatter
+ * rather than let mentions quietly disappear if it is ever renamed.
+ */
+function linkSuggestions(app: App): LinkSuggestion[] {
+  const cache = app.metadataCache as unknown as {
+    getLinkSuggestions?: () => LinkSuggestion[];
+  };
+  if (typeof cache.getLinkSuggestions === "function") return cache.getLinkSuggestions();
+
+  const suggestions: LinkSuggestion[] = [];
+  for (const file of app.vault.getMarkdownFiles()) {
+    suggestions.push({ file });
+    const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+    for (const alias of parseFrontMatterAliases(frontmatter) ?? []) {
+      suggestions.push({ file, alias });
+    }
+  }
+  return suggestions;
 }
 
 /**
@@ -189,7 +209,7 @@ export function scanMentions(
       if (candidate.file.path === source.path) continue;
 
       for (const start of findOccurrences(text, lower, candidate, blocked)) {
-        hits.push({ start, end: start + candidate.name.length, candidate });
+        hits.push({ start, end: start + candidate.lower.length, candidate });
       }
     }
   }
@@ -251,6 +271,9 @@ export function spansToLink(mention: Mention, scope: MentionScope): Span[] {
 /**
  * A link to `target` for the text at `span`. The alias comes from the document
  * rather than the note, so a lowercase "style" stays lowercase once linked.
+ *
+ * Inside a table the alias pipe would split the cell, so it is escaped the way
+ * Obsidian expects there: `[[Style\|style]]`.
  */
 export function linkForSpan(
   app: App,
@@ -260,13 +283,52 @@ export function linkForSpan(
   span: Span
 ): string {
   const shown = text.slice(span.start, span.end);
-  return app.fileManager.generateMarkdownLink(
+  const link = app.fileManager.generateMarkdownLink(
     target,
     source.path,
     undefined,
     shown === target.basename ? undefined : shown
   );
+  return inTable(text, span.start) ? link.replace(/(?<!\\)\|/g, "\\|") : link;
 }
+
+/**
+ * Whether `offset` sits on a row of a pipe table: its line has a pipe, and the
+ * run of non-blank lines around it has a delimiter row like `| --- | :-: |`.
+ */
+export function inTable(text: string, offset: number): boolean {
+  const lineStart = (at: number) => text.lastIndexOf("\n", at - 1) + 1;
+  const lineEnd = (at: number) => {
+    const end = text.indexOf("\n", at);
+    return end === -1 ? text.length : end;
+  };
+  const isRow = (line: string) => line.includes("|");
+  const isDelimiter = (line: string) => isRow(line) && TABLE_DELIMITER.test(stripQuote(line));
+
+  const start = lineStart(offset);
+  if (!isRow(text.slice(start, lineEnd(start)))) return false;
+
+  // Up from this line, then down from the next, while lines still look like rows.
+  for (let at = start; ; at = lineStart(at - 1)) {
+    const line = text.slice(at, lineEnd(at));
+    if (!isRow(line)) break;
+    if (isDelimiter(line)) return true;
+    if (at === 0) break;
+  }
+  for (let at = lineEnd(start) + 1; at <= text.length; at = lineEnd(at) + 1) {
+    const line = text.slice(at, lineEnd(at));
+    if (!isRow(line)) break;
+    if (isDelimiter(line)) return true;
+  }
+  return false;
+}
+
+/** A line without its blockquote or callout markers, since tables nest in those. */
+function stripQuote(line: string): string {
+  return line.replace(/^(?:[ \t]*>)+/, "");
+}
+
+const TABLE_DELIMITER = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 interface Hit {
   start: number;
@@ -309,17 +371,17 @@ export type Range = [number, number];
 /**
  * Lowercase without moving any offset. `"\u0130".toLowerCase()` is two code
  * units, which would shift every offset after it and silently kill matching
- * for the rest of the note.
+ * for the rest of the note. A character that grows keeps only its leading
+ * units, so "\u0130" lowers to a plain "i" and still matches one.
  */
 function toLowerKeepingOffsets(text: string): string {
   const lower = text.toLowerCase();
   if (lower.length === text.length) return lower;
 
   let result = "";
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
+  for (const char of text) {
     const low = char.toLowerCase();
-    result += low.length === 1 ? low : char;
+    result += low.length === char.length ? low : low.length > char.length ? low.slice(0, char.length) : char;
   }
   return result;
 }
@@ -328,6 +390,10 @@ function toLowerKeepingOffsets(text: string): string {
  * Block-level regions: fenced code of either marker, raw HTML blocks, and
  * indented code. These are what the metadata cache used to supply, found from
  * the text instead so they hold for unsaved text too.
+ *
+ * A fence can sit inside a callout, a blockquote or a list item, so it is
+ * looked for after the container markers and indentation are stripped. That
+ * errs towards blocking: a fence that only looks nested still hides its body.
  */
 function blockRanges(text: string): Range[] {
   const ranges: Range[] = [];
@@ -343,11 +409,26 @@ function blockRanges(text: string): Range[] {
 
   let i = 0;
   while (i < lines.length) {
-    const fence = lines[i].match(FENCE);
+    // Checked before fences: a fence marker inside indented code is code, not
+    // a fence. A list continuation is never indented code, so a fence under a
+    // list item still reaches the fence check below.
+    if (INDENTED.test(lines[i]) && startsIndentedCode(lines, i)) {
+      let j = i;
+      let last = i;
+      while (j < lines.length && (lines[j].trim() === "" || INDENTED.test(lines[j]))) {
+        if (lines[j].trim() !== "") last = j;
+        j += 1;
+      }
+      ranges.push([starts[i], endOf(last)]);
+      i = j;
+      continue;
+    }
+
+    const fence = stripContainers(lines[i]).match(FENCE);
     if (fence) {
-      const closing = new RegExp(`^ {0,3}${fence[1][0] === "`" ? "`" : "~"}{${fence[1].length},}\\s*$`);
+      const closing = new RegExp(`^${fence[1][0] === "`" ? "`" : "~"}{${fence[1].length},}\\s*$`);
       let j = i + 1;
-      while (j < lines.length && !closing.test(lines[j])) j += 1;
+      while (j < lines.length && !closing.test(stripContainers(lines[j]))) j += 1;
       ranges.push([starts[i], j < lines.length ? endOf(j) : text.length]);
       i = j + 1;
       continue;
@@ -362,22 +443,18 @@ function blockRanges(text: string): Range[] {
       continue;
     }
 
-    if (INDENTED.test(lines[i]) && startsIndentedCode(lines, i)) {
-      let j = i;
-      let last = i;
-      while (j < lines.length && (lines[j].trim() === "" || INDENTED.test(lines[j]))) {
-        if (lines[j].trim() !== "") last = j;
-        j += 1;
-      }
-      ranges.push([starts[i], endOf(last)]);
-      i = j;
-      continue;
-    }
-
     i += 1;
   }
 
   return ranges;
+}
+
+/**
+ * A line with its blockquote and callout markers, list markers and
+ * indentation removed, which is where a nested fence starts.
+ */
+function stripContainers(line: string): string {
+  return line.replace(CONTAINERS, "");
 }
 
 /**
@@ -400,17 +477,24 @@ function startsIndentedCode(lines: string[], index: number): boolean {
 const BLOCKED_PATTERNS = [
   /`[^`\n]*`/g, // inline code
   /\$\$[\s\S]*?(?:\$\$|$)/g, // display math
+  // Inline math: `$` hugging non-space on both sides, and no digit after the
+  // closing one, so "$5 and $10" stays prose.
+  /(?<![\\$])\$(?!\$)[^\s$](?:[^$\n]*[^\s$\\])?\$(?!\d)/g,
   /%%[\s\S]*?(?:%%|$)/g, // comments
   /<!--[\s\S]*?(?:-->|$)/g, // html comments
   /<\/?[a-zA-Z][^>\n]*>/g, // html tags, so a name inside an attribute is safe
   /https?:\/\/[^\s)<>]+/g, // bare URLs
   /\[[^\]\n]*\]\([^)\n]*\)/g, // markdown links, both halves
   /\[\[[^\]\n]*\]\]/g, // wikilinks, including unresolved ones
+  /\[[^\]\n]*\]\[[^\]\n]*\]/g, // reference links, both halves
+  /\[\^[^\]\n]*\]/g, // footnote references
+  /^ {0,3}\[(?!\^)[^\]\n]+\]:.*$/gm, // link reference definitions
   /#[\p{L}\p{N}/_-]+/gu, // tags
 ];
 
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---/;
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const FENCE = /^(`{3,}|~{3,})/;
+const CONTAINERS = /^(?:[ \t]*(?:>|[-*+][ \t]|\d+[.)][ \t]))*[ \t]*/;
 const HTML_BLOCK = /^ {0,3}<[a-zA-Z!/]/;
 const INDENTED = /^(?: {4}|\t)/;
 const LIST_ITEM = /^ *(?:[-*+]|\d+[.)])\s/;
@@ -476,8 +560,8 @@ export interface LinkResult {
  * trusting offsets captured at render time, so an edit between render and
  * click cannot corrupt the note.
  *
- * When the note is open the edit goes through the editor: it lands in one undo
- * step, and keystrokes the editor has not saved yet cannot be clobbered by a
+ * When the note is open in any pane the edit goes through that editor: it lands
+ * in one undo step, and keystrokes the editor has not saved yet cannot be clobbered by a
  * disk-level write that never saw them.
  */
 export async function linkMentions(
@@ -487,14 +571,19 @@ export async function linkMentions(
   scope: MentionScope,
   select: (mention: Mention) => boolean
 ): Promise<LinkResult> {
-  const groupsIn = (text: string): Group[] =>
-    scanMentions(app, source, text, blockedRanges(text), index)
+  const groupsIn = (text: string): Group[] => {
+    // resolvedLinks lags the text until the note is saved and parsed, so in
+    // "first" scope a target linked moments ago, by a double click say, is
+    // checked against the text itself.
+    const linkedInText = scope === "first" ? linkTargetsIn(app, source, text) : null;
+    return scanMentions(app, source, text, blockedRanges(text), index)
       .filter(select)
+      .filter((mention) => !linkedInText?.has(mention.file.path))
       .map((mention) => ({ target: mention.file, spans: spansToLink(mention, scope) }))
       .filter((group) => group.spans.length > 0);
+  };
 
-  const context = app.workspace.activeEditor;
-  const editor = context?.file?.path === source.path ? context.editor : null;
+  const editor = openEditor(app, source);
 
   if (editor) {
     const text = editor.getValue();
@@ -545,6 +634,46 @@ export async function linkMentions(
 interface Group {
   target: TFile;
   spans: Span[];
+}
+
+/** Paths of the notes `text` links to, wikilinks and markdown links alike. */
+function linkTargetsIn(app: App, source: TFile, text: string): Set<string> {
+  const targets = new Set<string>();
+  for (const match of text.matchAll(LINK_TARGET)) {
+    const raw = match[1] ?? match[2];
+    let linkpath = raw.split(/[#|^]/)[0].trim();
+    if (match[2] !== undefined) {
+      try {
+        linkpath = decodeURIComponent(linkpath);
+      } catch {
+        // Keep the raw path when it is not valid percent-encoding.
+      }
+    }
+    if (!linkpath) continue;
+    const target = app.metadataCache.getFirstLinkpathDest(linkpath, source.path);
+    if (target) targets.add(target.path);
+  }
+  return targets;
+}
+
+const LINK_TARGET = /\[\[([^\]\n]+)\]\]|\]\(<?([^)>\s]+)>?\)/g;
+
+/**
+ * An editor showing `file`, wherever it is open: the active one first, then
+ * any other pane, split or popout. A disk write while any of them holds unsaved
+ * text would be overwritten by that editor's next save, or overwrite it.
+ */
+function openEditor(app: App, file: TFile): Editor | null {
+  const active = app.workspace.activeEditor;
+  if (active?.file?.path === file.path && active.editor) return active.editor;
+
+  const views: MarkdownView[] = [];
+  app.workspace.iterateAllLeaves((leaf) => {
+    if (leaf.view instanceof MarkdownView && leaf.view.file?.path === file.path) {
+      views.push(leaf.view);
+    }
+  });
+  return views[0]?.editor ?? null;
 }
 
 /** One target's mentions, from the row's link button. Returns how many linked. */
