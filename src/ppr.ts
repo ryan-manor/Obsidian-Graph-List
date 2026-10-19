@@ -8,7 +8,7 @@
 // that only touches the seed's neighborhood, so cost is O(1/(alpha*eps))
 // pushes regardless of how big the vault is.
 //
-// This module is pure — adjacency in, scores out — so it can be reasoned about
+// This module is pure (adjacency in, scores out), so it can be reasoned about
 // and tested without Obsidian.
 
 /** Undirected adjacency: note path -> set of neighbour note paths. */
@@ -135,8 +135,8 @@ const PPR_TIEBREAK = 1e-3;
  *
  * Adamic-Adar carries the ordering because it asks the question the list cares
  * about: how much of this note's neighbourhood does that note also sit in? Ties
- * are exact and common, so push-PPR mass — which sees paths of any length, not
- * just the 2-hop ones AA counts — separates them, including the neighbours that
+ * are exact and common, so push-PPR mass, which sees paths of any length, not
+ * just the 2-hop ones AA counts, separates them, including the neighbours that
  * share nothing and would otherwise all sit at zero.
  *
  * Two alternatives were measured on this vault and rejected:

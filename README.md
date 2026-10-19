@@ -5,7 +5,7 @@ unlinked mentions pane folded into the same list.
 
 A sidebar is tall and narrow, so a graph canvas wastes most of it and a table
 view needs horizontal scrolling. This view takes the same data the local graph
-uses — resolved inbound and outbound links for the active note — and renders it
+uses (resolved inbound and outbound links for the active note) and renders it
 the way a Bases list view does: title, then the properties you picked
 underneath.
 
@@ -59,7 +59,7 @@ every render (~12ms on a 3,400-note vault):
   "how much of this note's world does that note also live in", and the
   `1/log(degree)` discount means a connection routed through a busy daily note
   or MOC counts for almost nothing.
-- **Push-PPR** breaks its ties — Adamic-Adar ties are exact and common.
+- **Push-PPR** breaks its ties, since Adamic-Adar ties are exact and common.
   Personalized PageRank seeded at the source, approximated by Andersen-Chung-Lang
   local push (*Local Graph Partitioning using PageRank Vectors*, FOCS 2006),
   which only touches the seed's neighbourhood, so cost does not scale with the
@@ -71,7 +71,7 @@ Two alternatives were measured on a real vault and rejected. Raw PPR mass alone
 tracks degree closely enough to read as "sort by how busy the note is". The ACL
 sweep quantity, mass/degree, inverts that: on a note about Seek's specificity
 boost it put a two-link daily note first and buried the project home page last
-at 0.09 — sweep order is built for finding cluster boundaries, not for ranking
+at 0.09. Sweep order is built for finding cluster boundaries, not for ranking
 inside a neighbourhood.
 
 ## Unlinked mentions
@@ -147,7 +147,7 @@ the alias floor and link scope. That is the code that decides where the plugin
 writes into prose, so it is the part worth pinning down. Nothing in it touches
 Obsidian at runtime, which is what makes it testable outside the app.
 
-`esbuild.config.mjs` hardcodes the vault plugin directory — change it there if
+`esbuild.config.mjs` hardcodes the vault plugin directory; change it there if
 your vault lives elsewhere.
 
 A release attaches `main.js`, `manifest.json` and `styles.css` to a GitHub release
