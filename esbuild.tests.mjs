@@ -1,10 +1,10 @@
 // Tests import the real modules, so they need bundling before node --test can
-// run them. Type-only imports of "obsidian" disappear in the process, which is
-// why the matcher is kept free of Obsidian runtime calls.
+// run them. The "obsidian" package has types but no runtime code, so the bundle
+// swaps it for a small stub that covers what the tested modules touch.
 import esbuild from "esbuild";
 
 await esbuild.build({
-  entryPoints: ["tests/mentions.test.ts"],
+  entryPoints: ["tests/*.test.ts"],
   bundle: true,
   platform: "node",
   format: "esm",
@@ -12,5 +12,6 @@ await esbuild.build({
   outdir: "build-tests",
   outExtension: { ".js": ".mjs" },
   external: ["node:*"],
+  alias: { obsidian: "./tests/obsidian-stub.ts" },
   logLevel: "warning",
 });
