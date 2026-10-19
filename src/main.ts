@@ -1,4 +1,12 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import {
+  CachedMetadata,
+  Notice,
+  Plugin,
+  TAbstractFile,
+  TFile,
+  WorkspaceLeaf,
+  parseFrontMatterAliases,
+} from "obsidian";
 import {
   DEFAULT_SETTINGS,
   LocalGraphListSettingTab,
@@ -14,8 +22,19 @@ export default class LocalGraphListPlugin extends Plugin {
   /** Whole-vault adjacency, rebuilt only when links actually change. */
   private adjacency: AdjMap | null = null;
 
-  /** Every title and alias in the vault, rebuilt alongside the adjacency. */
+  /** Every title and alias in the vault, rebuilt only when names change. */
   private mentionIndex: MentionIndex | null = null;
+
+  /**
+   * Per-file link targets and aliases as of the last build, so an edit that
+   * only touches prose can be told apart from one that changes the graph.
+   */
+  private linkSignatures = new Map<string, string>();
+  private aliasSignatures = new Map<string, string>();
+
+  /** What changed since the last "resolved", handed to the views then. */
+  private structureChanged = false;
+  private changedPaths = new Set<string>();
 
   async onload() {
     await this.loadSettings();
@@ -44,10 +63,32 @@ export default class LocalGraphListPlugin extends Plugin {
       },
     });
 
+    this.registerHoverLinkSource(VIEW_TYPE_LOCAL_GRAPH_LIST, {
+      display: "Graph List",
+      defaultMod: true,
+    });
+
+    // Typing fires these on every pause, so drop the whole-vault structures
+    // only when what they are built from actually changed.
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (file, _data, cache) => {
+        this.changedPaths.add(file.path);
+        this.checkAliases(file, cache);
+      })
+    );
+    this.registerEvent(this.app.metadataCache.on("resolve", (file) => this.checkLinks(file)));
+    this.registerEvent(this.app.vault.on("create", (file) => this.onStructureChange(file)));
+    this.registerEvent(this.app.vault.on("delete", (file) => this.onStructureChange(file)));
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => this.onStructureChange(file, oldPath))
+    );
     this.registerEvent(
       this.app.metadataCache.on("resolved", () => {
-        this.adjacency = null;
-        this.mentionIndex = null;
+        const structural = this.structureChanged;
+        const paths = this.changedPaths;
+        this.structureChanged = false;
+        this.changedPaths = new Set();
+        for (const view of this.views()) view.onMetadataResolved(structural, paths);
       })
     );
 
@@ -56,6 +97,40 @@ export default class LocalGraphListPlugin extends Plugin {
 
   onunload() {
     // Leaves are left in place so the view is restored on next load.
+  }
+
+  /** A file appearing, going or moving changes both names and links. */
+  private onStructureChange(file: TAbstractFile, oldPath?: string): void {
+    this.adjacency = null;
+    this.mentionIndex = null;
+    this.structureChanged = true;
+    this.changedPaths.add(file.path);
+    if (oldPath) this.changedPaths.add(oldPath);
+  }
+
+  /** Drop the adjacency when this file's resolved link targets changed. */
+  private checkLinks(file: TFile): void {
+    if (!this.adjacency) return;
+    const signature = linkSignature(this.app.metadataCache.resolvedLinks[file.path]);
+    if (signature === (this.linkSignatures.get(file.path) ?? "")) return;
+    this.adjacency = null;
+    this.structureChanged = true;
+  }
+
+  /** Drop the mention index when this file's aliases changed. */
+  private checkAliases(file: TFile, cache: CachedMetadata): void {
+    if (!this.mentionIndex) return;
+    const signature = aliasSignature(cache);
+    if (signature === (this.aliasSignatures.get(file.path) ?? "")) return;
+    this.mentionIndex = null;
+    this.structureChanged = true;
+  }
+
+  private views(): LocalGraphListView[] {
+    return this.app.workspace
+      .getLeavesOfType(VIEW_TYPE_LOCAL_GRAPH_LIST)
+      .map((leaf) => leaf.view)
+      .filter((view): view is LocalGraphListView => view instanceof LocalGraphListView);
   }
 
   /** Reveal the view in the right sidebar, creating it if needed. */
@@ -73,18 +148,28 @@ export default class LocalGraphListPlugin extends Plugin {
     if (leaf) await workspace.revealLeaf(leaf);
   }
 
-  /** Undirected vault link graph, cached until the metadata cache resolves again. */
+  /** Undirected vault link graph, cached until some note's links change. */
   getAdjacency(): AdjMap {
     if (!this.adjacency) {
-      this.adjacency = buildAdjacency(this.app.metadataCache.resolvedLinks);
+      const { resolvedLinks } = this.app.metadataCache;
+      this.adjacency = buildAdjacency(resolvedLinks);
+      this.linkSignatures.clear();
+      for (const path in resolvedLinks) {
+        this.linkSignatures.set(path, linkSignature(resolvedLinks[path]));
+      }
     }
     return this.adjacency;
   }
 
-  /** Title and alias lookup for unlinked mentions, cached on the same cycle. */
+  /** Title and alias lookup for unlinked mentions, cached until names change. */
   getMentionIndex(): MentionIndex {
     if (!this.mentionIndex) {
       this.mentionIndex = buildMentionIndex(this.app);
+      this.aliasSignatures.clear();
+      for (const file of this.app.vault.getMarkdownFiles()) {
+        const cache = this.app.metadataCache.getFileCache(file);
+        if (cache) this.aliasSignatures.set(file.path, aliasSignature(cache));
+      }
     }
     return this.mentionIndex;
   }
@@ -118,17 +203,26 @@ export default class LocalGraphListPlugin extends Plugin {
 
   /** Re-render every open instance after a settings change. */
   refreshViews(): void {
-    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_LOCAL_GRAPH_LIST)) {
-      const view = leaf.view;
-      if (view instanceof LocalGraphListView) view.render();
-    }
+    for (const view of this.views()) view.render();
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const saved = (await this.loadData()) as Partial<LocalGraphListSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // The settings tab edits this array in place, so it must not be the default's.
+    this.settings.properties = [...this.settings.properties];
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
   }
+}
+
+/** Link targets only: counts do not change the adjacency. */
+function linkSignature(links: Record<string, number> | undefined): string {
+  return links ? Object.keys(links).sort().join("\n") : "";
+}
+
+function aliasSignature(cache: CachedMetadata): string {
+  return (parseFrontMatterAliases(cache.frontmatter) ?? []).join("\n");
 }

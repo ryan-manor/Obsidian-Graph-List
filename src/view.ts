@@ -76,15 +76,27 @@ export class LocalGraphListView extends ItemView {
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => this.scheduleRender())
     );
-    this.registerEvent(this.app.metadataCache.on("resolved", () => this.scheduleRender()));
-    this.registerEvent(
-      this.app.metadataCache.on("changed", (file) => {
-        if (this.renderedPaths.has(file.path)) this.scheduleRender();
-      })
-    );
     this.registerEvent(this.app.vault.on("rename", () => this.scheduleRender()));
 
     this.render();
+  }
+
+  async onClose(): Promise<void> {
+    this.scheduleRender.cancel();
+    // Any render still waiting on its mention scan sees a stale token and stops.
+    this.renderToken += 1;
+    this.contentEl.empty();
+  }
+
+  /**
+   * Called by the plugin once the metadata cache settles. Re-render when the
+   * graph or the names changed, or when a note on screen did; an edit to some
+   * unrelated note leaves the list alone.
+   */
+  onMetadataResolved(structural: boolean, paths: Set<string>): void {
+    if (structural || [...paths].some((path) => this.renderedPaths.has(path))) {
+      this.scheduleRender();
+    }
   }
 
   /** Last markdown-ish file the user looked at, ignoring this sidebar view. */
@@ -93,7 +105,7 @@ export class LocalGraphListView extends ItemView {
   }
 
   render(): void {
-    void this.renderAsync();
+    this.renderAsync().catch((error) => console.error("Graph List: render failed", error));
   }
 
   private async renderAsync(): Promise<void> {
@@ -104,7 +116,12 @@ export class LocalGraphListView extends ItemView {
     // A newer render started while we waited wins.
     let mentions: Mention[] = [];
     if (file?.extension === "md" && this.plugin.settings.showMentions) {
-      mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
+      // A failed scan costs the mention rows, not the links themselves.
+      try {
+        mentions = await findUnlinkedMentions(this.app, file, this.plugin.getMentionIndex());
+      } catch (error) {
+        console.error("Graph List: mention scan failed", error);
+      }
       if (token !== this.renderToken) return;
 
       // With "first", a linked note is done: its other mentions stay plain.

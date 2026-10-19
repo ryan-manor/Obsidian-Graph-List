@@ -151,6 +151,11 @@ const PPR_TIEBREAK = 1e-3;
  *
  * The source itself is excluded throughout: it is the teleport target and
  * hoards the PPR mass.
+ *
+ * Every direct neighbour gets a score. A hub that shares no neighbours with
+ * the source can sit below the push threshold and collect no mass at all; it
+ * is floored just under the weakest real score rather than left blank, since
+ * a direct link is still closer than nothing.
  */
 export function proximityScores(adj: AdjMap, source: string): Map<string, number> {
   const aa = adamicAdar(adj, source);
@@ -167,7 +172,12 @@ export function proximityScores(adj: AdjMap, source: string): Map<string, number
   }
 
   const scores = new Map<string, number>();
-  if (pprMax <= 0 && aaMax <= 0) return scores;
+  const neighbors = adj.get(source) ?? new Set<string>();
+  if (pprMax <= 0 && aaMax <= 0) {
+    // Nothing reached past the source: its neighbours are all equally close.
+    for (const path of neighbors) if (path !== source) scores.set(path, 1);
+    return scores;
+  }
 
   const paths = new Set<string>([...aa.keys(), ...mass.keys()]);
   for (const path of paths) {
@@ -179,6 +189,13 @@ export function proximityScores(adj: AdjMap, source: string): Map<string, number
       continue;
     }
     scores.set(path, (aa.get(path) ?? 0) / aaMax + PPR_TIEBREAK * near);
+  }
+
+  let weakest = Infinity;
+  for (const score of scores.values()) if (score > 0 && score < weakest) weakest = score;
+  const floor = Number.isFinite(weakest) ? weakest / 2 : 1;
+  for (const path of neighbors) {
+    if (path !== source && !((scores.get(path) ?? 0) > 0)) scores.set(path, floor);
   }
 
   return scores;

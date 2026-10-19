@@ -1,4 +1,4 @@
-import { AbstractInputSuggest, App, PluginSettingTab, Setting } from "obsidian";
+import { AbstractInputSuggest, App, PluginSettingTab, Setting, debounce } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 import type { MentionScope } from "./mentions";
 
@@ -119,8 +119,16 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
   }
 
   private async commit() {
+    this.commitSoon.cancel();
     await this.plugin.saveSettings();
     this.plugin.refreshViews();
+  }
+
+  /** Text fields commit once typing pauses, not on every keystroke. */
+  private commitSoon = debounce(() => void this.commit(), 400, true);
+
+  hide(): void {
+    this.commitSoon.run();
   }
 
   display(): void {
@@ -179,9 +187,9 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           text
             .setPlaceholder("created")
             .setValue(this.plugin.settings.sortProperty)
-            .onChange(async (value) => {
+            .onChange((value) => {
               this.plugin.settings.sortProperty = value.trim();
-              await this.commit();
+              this.commitSoon();
             });
           new PropertySuggest(this.app, text.inputEl, async (key) => {
             this.plugin.settings.sortProperty = key;
@@ -271,9 +279,9 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("property name")
           .setValue(prop)
-          .onChange(async (value) => {
+          .onChange((value) => {
             properties[index] = value.trim();
-            await this.commit();
+            this.commitSoon();
           });
         new PropertySuggest(this.app, text.inputEl, async (key) => {
           properties[index] = key;

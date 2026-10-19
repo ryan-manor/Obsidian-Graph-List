@@ -198,3 +198,21 @@ test("notes in another component get no score", () => {
 test("an isolated source gets an empty list", () => {
   assert.equal(proximityScores(new Map([["s", new Set()]]), "s").size, 0);
 });
+
+test("a hub neighbour the push never reaches still gets a score", () => {
+  // The hub's share of the source's residual, spread over 20,000 links, is
+  // below the push threshold, and it shares no neighbours with the source.
+  const edges: [string, string][] = [["s", "a"], ["s", "b"], ["a", "b"], ["s", "hub"]];
+  for (let i = 0; i < 20000; i++) edges.push(["hub", `leaf${i}`]);
+  const adj = graph(edges);
+  assert.ok(!pushPPR(adj, "s").has("hub"));
+
+  const scores = proximityScores(adj, "s");
+  const hub = scores.get("hub") as number;
+  assert.ok(hub > 0, "the hub was left blank");
+
+  // Floored below every real score, so it sorts last without overtaking any.
+  for (const [path, score] of scores) {
+    if (path !== "hub") assert.ok(hub < score, `hub ${hub} vs ${path} ${score}`);
+  }
+});
