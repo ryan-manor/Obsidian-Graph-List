@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-better-links",
+  "name": "obsidian-graph-list",
   "version": "0.1.0",
   "description": "The local graph as a ranked list, with unlinked mentions",
   "main": "main.js",

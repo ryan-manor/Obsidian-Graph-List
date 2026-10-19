@@ -825,7 +825,7 @@ var LocalGraphListView = class extends import_obsidian3.ItemView {
     return VIEW_TYPE_LOCAL_GRAPH_LIST;
   }
   getDisplayText() {
-    return "BetterLinks";
+    return "Graph List";
   }
   getIcon() {
     return "list-tree";
@@ -1213,7 +1213,7 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       VIEW_TYPE_LOCAL_GRAPH_LIST,
       (leaf) => new LocalGraphListView(leaf, this)
     );
-    this.addRibbonIcon("list-tree", "BetterLinks", () => this.activateView());
+    this.addRibbonIcon("list-tree", "Graph List", () => this.activateView());
     this.addCommand({
       id: "open",
       name: "Open links pane",
@@ -1283,7 +1283,7 @@ var LocalGraphListPlugin = class extends import_obsidian4.Plugin {
       );
       this.refreshViews();
     } catch (error) {
-      console.error("BetterLinks: linking mentions failed", error);
+      console.error("Graph List: linking mentions failed", error);
       new import_obsidian4.Notice("Could not link mentions.");
     }
   }

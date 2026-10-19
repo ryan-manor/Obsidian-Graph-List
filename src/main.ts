@@ -25,11 +25,11 @@ export default class LocalGraphListPlugin extends Plugin {
       (leaf) => new LocalGraphListView(leaf, this)
     );
 
-    this.addRibbonIcon("list-tree", "BetterLinks", () => this.activateView());
+    this.addRibbonIcon("list-tree", "Graph List", () => this.activateView());
 
     this.addCommand({
       id: "open",
-      name: "Open links pane",
+      name: "Open graph list",
       callback: () => this.activateView(),
     });
 
@@ -111,7 +111,7 @@ export default class LocalGraphListPlugin extends Plugin {
       );
       this.refreshViews();
     } catch (error) {
-      console.error("BetterLinks: linking mentions failed", error);
+      console.error("Graph List: linking mentions failed", error);
       new Notice("Could not link mentions.");
     }
   }

@@ -6,7 +6,7 @@ const prod = process.argv[2] === "production";
 
 const VAULT_PLUGIN_DIR = join(
   process.env.HOME,
-  "Library/Mobile Documents/iCloud~md~obsidian/Documents/My Vault/.obsidian/plugins/better-links"
+  "Library/Mobile Documents/iCloud~md~obsidian/Documents/My Vault/.obsidian/plugins/graph-list"
 );
 
 const ctx = await esbuild.context({

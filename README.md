@@ -1,4 +1,4 @@
-# BetterLinks
+# Graph List
 
 The local graph, rendered as a list instead of a force-directed blob, with the
 unlinked mentions pane folded into the same list.
@@ -33,7 +33,7 @@ link button is always visible where there is no hover to reveal it.
 ## Controls
 
 Everything is global, configured once under Settings → Community plugins →
-BetterLinks, with no per-note overrides. The sort control in the view header
+Graph List, with no per-note overrides. The sort control in the view header
 writes to the same settings.
 
 | Setting | What it does |

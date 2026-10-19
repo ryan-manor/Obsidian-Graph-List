@@ -62,7 +62,7 @@ export class LocalGraphListView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "BetterLinks";
+    return "Graph List";
   }
 
   getIcon(): string {
@@ -301,7 +301,7 @@ export class LocalGraphListView extends ItemView {
         if (linked === 0) new Notice(`No unlinked mention of "${mention.file.basename}" left.`);
         this.render();
       } catch (error) {
-        console.error("Local Graph List: linking failed", error);
+        console.error("Graph List: linking failed", error);
         new Notice(`Could not link "${mention.file.basename}".`);
       }
     });

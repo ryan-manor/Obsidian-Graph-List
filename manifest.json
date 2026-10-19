@@ -1,6 +1,6 @@
 {
-  "id": "better-links",
-  "name": "BetterLinks",
+  "id": "graph-list",
+  "name": "Graph List",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
   "description": "The local graph as a ranked list, with unlinked mentions you can link from the same pane.",
