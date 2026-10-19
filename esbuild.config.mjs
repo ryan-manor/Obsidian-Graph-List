@@ -21,12 +21,20 @@ const ctx = await esbuild.context({
   outfile: "main.js",
   plugins: [
     {
+      // A release ships main.js, manifest.json and styles.css side by side, so
+      // the stylesheet is emitted next to main.js rather than only in src/.
+      name: "emit-styles",
+      setup(build) {
+        build.onEnd(() => copyFileSync("src/styles.css", "styles.css"));
+      },
+    },
+    {
       name: "copy-to-vault",
       setup(build) {
         build.onEnd(() => {
           try {
             copyFileSync("main.js", join(VAULT_PLUGIN_DIR, "main.js"));
-            copyFileSync("src/styles.css", join(VAULT_PLUGIN_DIR, "styles.css"));
+            copyFileSync("styles.css", join(VAULT_PLUGIN_DIR, "styles.css"));
             copyFileSync("manifest.json", join(VAULT_PLUGIN_DIR, "manifest.json"));
             console.log("Copied main.js + styles.css + manifest.json to vault plugin dir");
           } catch {

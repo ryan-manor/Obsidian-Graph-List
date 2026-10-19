@@ -137,7 +137,7 @@ an unlinked candidate usually shares no neighbours with the note, so it scores z
 ```
 npm install
 npm run dev        # watch, copies main.js + styles.css + manifest.json to the vault
-npm run build      # production
+npm run build      # production: main.js and styles.css next to manifest.json
 npm run typecheck
 npm test           # bundles tests/ and runs them on node:test
 ```
@@ -149,3 +149,11 @@ Obsidian at runtime, which is what makes it testable outside the app.
 
 `esbuild.config.mjs` hardcodes the vault plugin directory — change it there if
 your vault lives elsewhere.
+
+A release attaches `main.js`, `manifest.json` and `styles.css` to a GitHub release
+tagged with the manifest version; the built files are not committed. `versions.json`
+maps each plugin version to the minimum Obsidian version it needs.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

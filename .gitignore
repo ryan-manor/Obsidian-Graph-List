@@ -1,3 +1,7 @@
 node_modules/
 .DS_Store
 build-tests/
+
+# Build output, attached to GitHub releases instead
+/main.js
+/styles.css
