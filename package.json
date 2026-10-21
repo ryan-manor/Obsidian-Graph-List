@@ -1,6 +1,6 @@
 {
   "name": "obsidian-graph-list",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The local graph as a ranked list, with unlinked mentions",
   "main": "main.js",
   "scripts": {
