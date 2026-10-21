@@ -41,7 +41,7 @@ writes to the same settings.
 | Sort by | Graph proximity, created time, modified time, a property, or title |
 | Sort direction | Ascending / descending. Notes missing the sort value always land last |
 | Separate inbound and outbound | Two groups, or one flat list |
-| Properties | Which properties appear, in which order. `sort` tracks the sort key |
+| Shown under each title | Which properties appear; drag to reorder. `sort` tracks the sort key |
 | Show property names | Label each value with its key |
 | Number rows | Running count beside each title |
 | Include attachments | Show linked images and PDFs alongside notes |
