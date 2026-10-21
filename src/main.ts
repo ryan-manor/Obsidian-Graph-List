@@ -35,6 +35,10 @@ interface InboundCache {
   dirty: Set<string>;
   /** Scans run one after another, so a render never reads a half-filled map. */
   ready: Promise<void>;
+  /** Scans queued or running. */
+  pending: number;
+  /** Whether the full scan has finished, so `found` covers the vault. */
+  complete: boolean;
 }
 
 export default class LocalGraphListPlugin extends Plugin {
@@ -211,35 +215,48 @@ export default class LocalGraphListPlugin extends Plugin {
     let full = false;
 
     if (!cache || cache.target !== target.path || cache.index !== index) {
-      cache = { target: target.path, index, found: new Map(), dirty: new Set(), ready: Promise.resolve() };
+      cache = {
+        target: target.path,
+        index,
+        found: new Map(),
+        dirty: new Set(),
+        ready: Promise.resolve(),
+        pending: 0,
+        complete: false,
+      };
       this.inbound = cache;
       full = true;
     }
 
     const current = cache;
+    current.pending += 1;
     current.ready = current.ready.then(async () => {
-      let sources: TFile[];
-      if (full) {
-        sources = this.app.vault.getMarkdownFiles();
-      } else {
-        sources = [];
-        for (const path of current.dirty) {
-          current.found.delete(path);
+      try {
+        const rescanned = full ? null : [...current.dirty];
+        current.dirty.clear();
+        const sources: TFile[] = [];
+        for (const path of rescanned ?? []) {
           const file = this.app.vault.getAbstractFileByPath(path);
           if (file instanceof TFile) sources.push(file);
         }
-      }
-      current.dirty.clear();
 
-      // A switch to another note replaces the cache; this scan then stops.
-      const found = await findInboundMentions(
-        this.app,
-        target,
-        index,
-        sources,
-        () => this.inbound !== current
-      );
-      for (const [path, mention] of found) current.found.set(path, mention);
+        // A switch to another note replaces the cache; this scan then stops.
+        const found = await findInboundMentions(
+          this.app,
+          target,
+          index,
+          rescanned ? sources : this.app.vault.getMarkdownFiles(),
+          () => this.inbound !== current
+        );
+        if (this.inbound !== current) return;
+
+        // Swapped in only once the scan is done, so a peek never sees a gap.
+        for (const path of rescanned ?? []) current.found.delete(path);
+        for (const [path, mention] of found) current.found.set(path, mention);
+        current.complete = true;
+      } finally {
+        current.pending -= 1;
+      }
     });
 
     try {
@@ -250,6 +267,19 @@ export default class LocalGraphListPlugin extends Plugin {
       throw error;
     }
     return current.found;
+  }
+
+  /**
+   * Inbound mentions of `target` as last scanned, without waiting for a scan.
+   * Null until the first full scan of it finishes; `fresh` is false while
+   * notes that changed since are still to be rescanned.
+   */
+  peekInboundMentions(target: TFile): { found: Map<string, Mention>; fresh: boolean } | null {
+    const cache = this.inbound;
+    if (!cache?.complete || cache.target !== target.path || cache.index !== this.getMentionIndex()) {
+      return null;
+    }
+    return { found: cache.found, fresh: cache.pending === 0 && cache.dirty.size === 0 };
   }
 
   /** Rescan `path` the next time inbound mentions are asked for. */
