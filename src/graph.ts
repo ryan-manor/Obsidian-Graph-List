@@ -11,7 +11,7 @@ export interface LinkGroup {
 }
 
 /** Canvases and bases count as notes; images, PDFs and other attachments do not. */
-const NOTE_EXTENSIONS = new Set(["md", "canvas", "base"]);
+export const NOTE_EXTENSIONS = new Set(["md", "canvas", "base"]);
 
 /**
  * Resolved outbound and inbound links for a file. Self-links are dropped, and

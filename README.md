@@ -69,7 +69,7 @@ every render (~12ms on a 3,400-note vault):
   which only touches the seed's neighbourhood, so cost does not scale with the
   vault. Ported from Seek's parked `feature/active-note-anchoring` branch.
 
-Scores are scaled so the strongest neighbour is 1.00, and shown on the row.
+Scores are scaled so the strongest neighbour is 1.00. They order the list but are not shown.
 
 Two alternatives were measured on a real vault and rejected. Raw PPR mass alone
 tracks degree closely enough to read as "sort by how busy the note is". The ACL

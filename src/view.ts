@@ -10,7 +10,7 @@ import {
 } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 import { findLinkRange, snippetFor, type LinkRange } from "./context";
-import { buildGroups, getPropertyValue, unwrapLink, type Direction } from "./graph";
+import { NOTE_EXTENSIONS, buildGroups, getPropertyValue, unwrapLink, type Direction } from "./graph";
 import type { SortKey } from "./settings";
 import { proximityScores, suggestNotes, type Suggestion } from "./ppr";
 import {
@@ -85,6 +85,9 @@ export class LocalGraphListView extends ItemView {
   private renderedPaths = new Set<string>();
 
   private scheduleRender = debounce(() => this.render(), 150, true);
+
+  /** Note text read for link context, shared by the rows of one render. */
+  private texts = new Map<string, Promise<string>>();
 
   /** Discards an in-flight render whose mention scan was overtaken. */
   private renderToken = 0;
@@ -181,6 +184,7 @@ export class LocalGraphListView extends ItemView {
     const { contentEl } = this;
     contentEl.empty();
     this.renderedPaths.clear();
+    this.texts.clear();
 
     this.renderHeader(contentEl, file);
 
@@ -222,9 +226,18 @@ export class LocalGraphListView extends ItemView {
     for (const group of groups) {
       if (group.files.length === 0) continue;
 
+      // Linked in this group's direction: a note A links to but that only names
+      // A back is still a ghost under Linked from.
+      const linksOut = (neighbor: TFile) => Boolean(links[file.path]?.[neighbor.path]);
+      const linksIn = (neighbor: TFile) => Boolean(links[neighbor.path]?.[file.path]);
       const rows = group.files.map((neighbor): Row => ({
         file: neighbor,
-        linked: Boolean(links[file.path]?.[neighbor.path] || links[neighbor.path]?.[file.path]),
+        linked:
+          group.direction === "out"
+            ? linksOut(neighbor)
+            : group.direction === "in"
+              ? linksIn(neighbor)
+              : linksOut(neighbor) || linksIn(neighbor),
         outMention: group.direction === "in" ? undefined : outbound.get(neighbor.path),
         inMention: group.direction === "out" ? undefined : inbound.get(neighbor.path),
       }));
@@ -279,12 +292,13 @@ export class LocalGraphListView extends ItemView {
       const target = this.app.vault.getAbstractFileByPath(suggestion.path);
       if (!(target instanceof TFile) || target.extension !== "md") continue;
 
+      // Attachments are not rows, so two shared images are not a reason.
       const via: TFile[] = [];
       for (const path of suggestion.via) {
         const shared = this.app.vault.getAbstractFileByPath(path);
-        if (shared instanceof TFile) via.push(shared);
+        if (shared instanceof TFile && NOTE_EXTENSIONS.has(shared.extension)) via.push(shared);
       }
-      rows.push({ file: target, via });
+      if (via.length >= 2) rows.push({ file: target, via });
     }
 
     return rows;
@@ -661,7 +675,12 @@ export class LocalGraphListView extends ItemView {
     }
 
     const { from, range } = found;
-    const text = "start" in range ? await this.app.vault.cachedRead(from) : "";
+    let read = this.texts.get(from.path);
+    if (!read && "start" in range) {
+      read = this.app.vault.cachedRead(from);
+      this.texts.set(from.path, read);
+    }
+    const text = read ? await read : "";
     const snippet = snippetFor(text, range);
     if (!snippet.match && !snippet.before && !snippet.after) {
       drop();

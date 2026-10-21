@@ -199,7 +199,9 @@ export async function findInboundMentions(
   app: App,
   target: TFile,
   index: MentionIndex,
-  sources: Iterable<TFile>
+  sources: Iterable<TFile>,
+  /** Checked between reads; a scan nobody is waiting for stops early. */
+  stale: () => boolean = () => false
 ): Promise<Map<string, Mention>> {
   const found = new Map<string, Mention>();
   if (target.extension !== "md") return found;
@@ -220,6 +222,7 @@ export async function findInboundMentions(
     if (source.extension !== "md" || source.path === target.path || ignored(source.path)) continue;
 
     const text = await app.vault.cachedRead(source);
+    if (stale()) return found;
     const lower = toLowerKeepingOffsets(text);
     if (!own.some((candidate) => lower.includes(candidate.lower))) continue;
     if (!matches(text, lower, [])) continue;

@@ -127,7 +127,8 @@ export default class LocalGraphListPlugin extends Plugin {
   private onStructureChange(file: TAbstractFile, oldPath?: string): void {
     this.adjacency = null;
     this.mentionIndex = null;
-    this.inbound = null;
+    // Only notes and folders can name a note; a pasted image changes nothing.
+    if (!(file instanceof TFile) || file.extension === "md") this.inbound = null;
     this.structureChanged = true;
     this.changedPaths.add(file.path);
     if (oldPath) this.changedPaths.add(oldPath);
@@ -230,7 +231,14 @@ export default class LocalGraphListPlugin extends Plugin {
       }
       current.dirty.clear();
 
-      const found = await findInboundMentions(this.app, target, index, sources);
+      // A switch to another note replaces the cache; this scan then stops.
+      const found = await findInboundMentions(
+        this.app,
+        target,
+        index,
+        sources,
+        () => this.inbound !== current
+      );
       for (const [path, mention] of found) current.found.set(path, mention);
     });
 

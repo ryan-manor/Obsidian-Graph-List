@@ -14,7 +14,7 @@ import type { ProximityAlgorithm } from "./ppr";
 
 /**
  * Retired display keys: `sort` followed the sort key and `proximity` was the
- * score. Stripped from saved settings; the score has its own toggle.
+ * score, which is no longer shown. Stripped from saved settings.
  */
 export const RETIRED_PROPERTIES = new Set(["sort", "proximity"]);
 
