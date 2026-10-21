@@ -5,7 +5,6 @@ import {
   buildGroups,
   collectNeighbors,
   getPropertyValue,
-  resolveSortProperty,
   sortFiles,
   unwrapLink,
 } from "../src/graph";
@@ -94,11 +93,8 @@ test("neighbours split into out and in, with self-links dropped", () => {
   assert.deepEqual(names(inbound), ["In", "Both"]);
 });
 
-test("attachments only show when the setting allows them", () => {
+test("attachments are left out", () => {
   const { app, files } = VAULT;
-  const withThem = collectNeighbors(app, files["Active.md"], settings({ includeAttachments: true }));
-  assert.ok(names(withThem.out).includes("Photo"));
-
   const without = collectNeighbors(app, files["Active.md"], settings());
   assert.ok(!names(without.out).includes("Photo"));
   // Canvases and bases are notes, not attachments.
@@ -127,6 +123,35 @@ test("separate directions gives two groups; merged gives one, deduplicated", () 
   assert.equal(merged.length, 1);
   assert.equal(merged[0].label, "Linked notes");
   assert.deepEqual(names(merged[0].files), ["Board", "Both", "In", "Out"]);
+});
+
+test("unlinked notes sort in with the linked ones, each in its own direction", () => {
+  const { app, files } = VAULT;
+  const active = files["Active.md"];
+  const unlinked = {
+    out: [file({ path: "Named.md" }), files["Out.md"]],
+    in: [file({ path: "Mentioner.md" })],
+  };
+
+  const [merged] = buildGroups(
+    app,
+    active,
+    settings({ separateDirections: false, sortKey: "title", sortDirection: "asc" }),
+    new Map(),
+    unlinked
+  );
+  assert.deepEqual(names(merged.files), ["Board", "Both", "In", "Mentioner", "Named", "Out"]);
+
+  const [linksTo, linkedFrom] = buildGroups(
+    app,
+    active,
+    settings({ separateDirections: true, sortKey: "title", sortDirection: "asc" }),
+    new Map(),
+    unlinked
+  );
+  assert.equal(linksTo.direction, "out");
+  assert.deepEqual(names(linksTo.files), ["Board", "Both", "Named", "Out"]);
+  assert.deepEqual(names(linkedFrom.files), ["Both", "In", "Mentioner"]);
 });
 
 test("proximity sorts strongest first, and unscored notes sort last", () => {
@@ -206,15 +231,6 @@ test("created and modified sort by file timestamps", () => {
     names(sortFiles(app, list, settings({ sortKey: "modified", sortDirection: "asc" }))),
     ["Old", "Mid", "New"]
   );
-});
-
-test("the displayed sort property is the one the list is ordered by", () => {
-  assert.equal(resolveSortProperty(settings({ sortKey: "proximity" })), "proximity");
-  assert.equal(resolveSortProperty(settings({ sortKey: "created" })), "file.ctime");
-  assert.equal(resolveSortProperty(settings({ sortKey: "modified" })), "file.mtime");
-  assert.equal(resolveSortProperty(settings({ sortKey: "property", sortProperty: "due" })), "due");
-  assert.equal(resolveSortProperty(settings({ sortKey: "property", sortProperty: "" })), null);
-  assert.equal(resolveSortProperty(settings({ sortKey: "title" })), null);
 });
 
 test("file pseudo-properties read the file, others read frontmatter", () => {

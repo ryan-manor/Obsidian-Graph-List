@@ -179,10 +179,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-.lgl-accept {
+.lgl-actions {
   grid-column: 3;
-  grid-row: 1;
+  /* Spans the props too, so the button does not push them down. */
+  grid-row: 1 / span 2;
   align-self: start;
+  display: flex;
+}
+
+.lgl-accept {
   padding: 0 var(--size-2-2);
   opacity: 0;
 }
@@ -198,4 +203,40 @@
 .lgl-has-mentions:hover .lgl-accept,
 .lgl-accept:focus-visible {
   opacity: 1;
+}
+
+/* Suggestions: related through shared neighbours, not linked. Quieter than a
+   real row, but not italic, since nothing in the text names them. */
+.lgl-suggested {
+  opacity: 0.7;
+}
+
+.lgl-suggested:hover {
+  opacity: 1;
+}
+
+.lgl-via-row .lgl-pill {
+  text-decoration: none;
+}
+
+/* The line a link sits on, two lines at most, with the link itself picked out. */
+.lgl-context {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  cursor: var(--cursor-link);
+}
+
+.lgl-context:hover {
+  color: var(--text-normal);
+}
+
+.lgl-context-match {
+  color: var(--text-normal);
+  font-weight: var(--font-medium);
 }

@@ -10,12 +10,13 @@ import {
 } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 import type { MentionScope } from "./mentions";
+import type { ProximityAlgorithm } from "./ppr";
 
-/** Display key that follows whatever the list is sorted by. */
-export const SORT_PROPERTY = "sort";
-
-/** Display key for the graph-proximity score. */
-export const PROXIMITY_PROPERTY = "proximity";
+/**
+ * Retired display keys: `sort` followed the sort key and `proximity` was the
+ * score, which is no longer shown. Stripped from saved settings.
+ */
+export const RETIRED_PROPERTIES = new Set(["sort", "proximity"]);
 
 export type SortKey =
   | "proximity"
@@ -24,6 +25,8 @@ export type SortKey =
   | "property"
   | "title";
 export type SortDirection = "asc" | "desc";
+/** What sits under each title: chosen properties, or the line the link is on. */
+export type Preview = "properties" | "context";
 
 export interface LocalGraphListSettings {
   sortKey: SortKey;
@@ -32,18 +35,24 @@ export interface LocalGraphListSettings {
   sortDirection: SortDirection;
   /** Split the list into Links to / Linked from instead of one flat list. */
   separateDirections: boolean;
+  /** What each row shows under its title. */
+  preview: Preview;
   /** Frontmatter keys (or file.* pseudo-keys) rendered under each title. */
   properties: string[];
   /** Prefix each value with its property name. */
   showPropertyNames: boolean;
   /** Number the rows within each group. */
   showIndex: boolean;
-  /** Include non-note links (images, PDFs, other attachments). */
-  includeAttachments: boolean;
-  /** Append unlinked outbound mentions as ghost rows. */
+  /** Rank unlinked outbound mentions in the list as ghost rows. */
   showMentions: boolean;
+  /** List other notes that name this one without linking it. */
+  showInboundMentions: boolean;
   /** Whether the link button converts the first mention of a note or all of them. */
   mentionScope: MentionScope;
+  /** How shared neighbours are discounted by their degree. */
+  algorithm: ProximityAlgorithm;
+  /** 1 lists linked notes; 2 also suggests unlinked notes two links away. */
+  depth: 1 | 2;
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
@@ -51,12 +60,15 @@ export const DEFAULT_SETTINGS: LocalGraphListSettings = {
   sortProperty: "created",
   sortDirection: "desc",
   separateDirections: true,
-  properties: [SORT_PROPERTY, "tags"],
+  preview: "properties",
+  properties: ["tags"],
   showPropertyNames: false,
   showIndex: true,
-  includeAttachments: false,
   showMentions: true,
+  showInboundMentions: true,
   mentionScope: "first",
+  algorithm: "adamic-adar",
+  depth: 1,
 };
 
 /** Pseudo-properties read off the file itself rather than frontmatter. */
@@ -82,8 +94,6 @@ interface AppWithPropertyRegistry {
  */
 export function getAllPropertyKeys(app: App): string[] {
   const keys = new Set<string>(FILE_PROPERTIES);
-  keys.add(SORT_PROPERTY);
-  keys.add(PROXIMITY_PROPERTY);
 
   const registry = (app as AppWithPropertyRegistry).metadataTypeManager?.properties;
   if (registry && typeof registry === "object") {
@@ -153,13 +163,16 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
-    return this.plugin.settings[key as keyof LocalGraphListSettings];
+    const value = this.plugin.settings[key as keyof LocalGraphListSettings];
+    // Dropdown options are strings; depth is stored as a number.
+    return key === "depth" ? String(value) : value;
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
-    (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
-    // The mention scope rewrites its own description; the rest only show or hide rows.
-    if (key === "mentionScope") await this.commitAndUpdate();
+    (this.plugin.settings as unknown as Record<string, unknown>)[key] =
+      key === "depth" ? Number(value) : value;
+    // These rewrite their own descriptions; the rest only show or hide rows.
+    if (key === "mentionScope" || key === "algorithm" || key === "preview") await this.commitAndUpdate();
     else {
       await this.commit();
       this.refreshDomState();
@@ -169,9 +182,11 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       this.sortDefinitions(),
+      this.graphDefinitions(),
       this.listDefinitions(),
       this.propertyDefinitions(),
-      this.propertyListDefinitions(),
+      // Rebuilt when the preview changes, so the list only shows while it applies.
+      ...(this.plugin.settings.preview === "properties" ? [this.propertyListDefinitions()] : []),
       this.mentionDefinitions(),
     ];
   }
@@ -231,6 +246,43 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
     };
   }
 
+  private graphDefinitions(): SettingDefinitionGroup {
+    const { settings } = this.plugin;
+
+    return {
+      type: "group",
+      heading: "Graph",
+      items: [
+        {
+          name: "Algorithm",
+          desc:
+            settings.algorithm === "adamic-adar"
+              ? "Adamic-Adar: each shared neighbour counts 1/log(its links), so busy notes are discounted gently."
+              : "Resource allocation: each shared neighbour counts 1/(its links), so a daily note or hub page counts for almost nothing.",
+          control: {
+            type: "dropdown",
+            key: "algorithm",
+            options: {
+              "adamic-adar": "Adamic-Adar",
+              "resource-allocation": "Resource allocation",
+            },
+          },
+        },
+        {
+          name: "Depth",
+          desc:
+            "At 2, a Suggested group lists notes this one does not link yet but shares at " +
+            "least two neighbours with, each with the notes they share.",
+          control: {
+            type: "dropdown",
+            key: "depth",
+            options: { "1": "1: linked notes", "2": "2: also suggest related notes" },
+          },
+        },
+      ],
+    };
+  }
+
   private listDefinitions(): SettingDefinitionGroup {
     return {
       type: "group",
@@ -246,30 +298,34 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           desc: "Show a running count beside each title",
           control: { type: "toggle", key: "showIndex" },
         },
-        {
-          name: "Include attachments",
-          desc: "List linked images, PDFs and other non-note files alongside notes",
-          control: { type: "toggle", key: "includeAttachments" },
-        },
       ],
     };
   }
 
   private propertyDefinitions(): SettingDefinitionGroup {
+    const showingProperties = () => this.plugin.settings.preview === "properties";
+
     return {
       type: "group",
-      heading: "Properties",
+      heading: "Preview",
       items: [
+        {
+          name: "Under each title",
+          desc:
+            this.plugin.settings.preview === "context"
+              ? "The line the link sits on, with the link highlighted. The first one when there are several; for an unlinked mention, the mention."
+              : "The properties listed below. Empty values are skipped.",
+          control: {
+            type: "dropdown",
+            key: "preview",
+            options: { properties: "Properties", context: "Link context" },
+          },
+        },
         {
           name: "Show property names",
           desc: "Label each value with its property key",
+          visible: showingProperties,
           control: { type: "toggle", key: "showPropertyNames" },
-        },
-        {
-          name: "Pseudo-properties",
-          desc:
-            `"${SORT_PROPERTY}" tracks whatever you sort by; "${PROXIMITY_PROPERTY}" is the ` +
-            `graph score. Empty values are skipped.`,
         },
       ],
     };
@@ -325,7 +381,7 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
 
   private mentionDefinitions(): SettingDefinitionGroup {
     const { settings } = this.plugin;
-    const mentionsOn = () => settings.showMentions;
+    const mentionsOn = () => settings.showMentions || settings.showInboundMentions;
 
     return {
       type: "group",
@@ -340,25 +396,26 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           control: { type: "toggle", key: "showMentions" },
         },
         {
+          name: "Show mentions in other notes",
+          desc:
+            "Notes that name this one but do not link it, as ghost rows in Linked from or the " +
+            "flat list. Same matching rules, and the link button writes the link into that note.",
+          control: { type: "toggle", key: "showInboundMentions" },
+        },
+        {
           name: "Link",
           desc:
-            settings.mentionScope === "first"
-              ? "The link button links the first mention. Once a note is linked, its other mentions stay plain text."
-              : "The link button links every mention. A note that is linked but mentioned again keeps its link button.",
+            (settings.mentionScope === "first"
+              ? "The link button links the first mention. Once a note is linked, its other mentions stay plain text. "
+              : "The link button links every mention. A note that is linked but mentioned again keeps its link button. ") +
+            "To catch up a whole note, the command “Link remaining mentions of linked notes” converts every " +
+            "leftover mention of notes it already links, in one undo step.",
           visible: mentionsOn,
           control: {
             type: "dropdown",
             key: "mentionScope",
             options: { first: "First mention", all: "All mentions" },
           },
-        },
-        {
-          name: "Linking every mention at once",
-          desc:
-            "The command “Link remaining mentions of linked notes” converts every leftover " +
-            "mention of notes this one already links, in one undo step. Notes you have not linked " +
-            "yourself stay suggestions, with their own button.",
-          visible: mentionsOn,
         },
       ],
     };

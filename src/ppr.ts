@@ -103,27 +103,104 @@ export function pushPPR(
 }
 
 /**
- * Adamic-Adar proximity from `source`: for every note v reachable through a
- * shared neighbour z, AA(v) = sum over z of 1/log(deg z). The 1/log(deg) term
- * discounts hub intermediaries, so a connection routed through a busy daily
- * note or MOC counts for almost nothing. Strictly a 2-hop signal.
+ * How a shared neighbour z is discounted by its degree. Adamic-Adar weighs it
+ * 1/log(deg z); Resource Allocation 1/deg z, which is the share of a unit of
+ * resource z passes to each of its links. RA is much harsher on hubs: a note
+ * with 72 links counts for a quarter under AA but a seventy-second under RA.
  */
-export function adamicAdar(adj: AdjMap, source: string): Map<string, number> {
-  const aa = new Map<string, number>();
-  const neighbors = adj.get(source);
-  if (!neighbors) return aa;
+export type ProximityAlgorithm = "adamic-adar" | "resource-allocation";
 
-  for (const z of neighbors) {
-    const dz = adj.get(z)?.size ?? 0;
-    const weight = dz > 1 ? 1 / Math.log(dz) : 0;
-    if (weight === 0) continue;
+function hubWeight(algorithm: ProximityAlgorithm, degree: number): number {
+  if (degree <= 1) return 0;
+  return algorithm === "resource-allocation" ? 1 / degree : 1 / Math.log(degree);
+}
+
+/**
+ * Shared-neighbour score from `source`: for every note v reachable through a
+ * shared neighbour z, the sum over z of z's hub weight. Strictly a 2-hop
+ * signal. `via`, when given, collects each v's shared neighbours, strongest
+ * first.
+ */
+export function sharedNeighborScores(
+  adj: AdjMap,
+  source: string,
+  algorithm: ProximityAlgorithm,
+  via?: Map<string, string[]>
+): Map<string, number> {
+  const scores = new Map<string, number>();
+  const neighbors = adj.get(source);
+  if (!neighbors) return scores;
+
+  // Strongest intermediary first, so each `via` list comes out ordered.
+  const ordered = [...neighbors]
+    .map((z) => ({ z, weight: hubWeight(algorithm, adj.get(z)?.size ?? 0) }))
+    .filter(({ weight }) => weight > 0)
+    .sort((a, b) => b.weight - a.weight);
+
+  for (const { z, weight } of ordered) {
     for (const v of adj.get(z) as Set<string>) {
       if (v === source) continue;
-      aa.set(v, (aa.get(v) ?? 0) + weight);
+      scores.set(v, (scores.get(v) ?? 0) + weight);
+      if (via) {
+        const list = via.get(v);
+        if (list) list.push(z);
+        else via.set(v, [z]);
+      }
     }
   }
 
-  return aa;
+  return scores;
+}
+
+/**
+ * Adamic-Adar proximity from `source`: for every note v reachable through a
+ * shared neighbour z, AA(v) = sum over z of 1/log(deg z). The 1/log(deg) term
+ * discounts hub intermediaries. Strictly a 2-hop signal.
+ */
+export function adamicAdar(adj: AdjMap, source: string): Map<string, number> {
+  return sharedNeighborScores(adj, source, "adamic-adar");
+}
+
+/** Resource Allocation from `source`: RA(v) = sum over shared neighbours z of 1/deg z. */
+export function resourceAllocation(adj: AdjMap, source: string): Map<string, number> {
+  return sharedNeighborScores(adj, source, "resource-allocation");
+}
+
+/** One shared neighbour is a coincidence; two is a pattern. */
+const MIN_SHARED = 2;
+
+export interface Suggestion {
+  path: string;
+  score: number;
+  /** Shared neighbours, strongest first. */
+  via: string[];
+}
+
+/**
+ * Notes two links away that the source does not link yet, strongest first:
+ * the link-prediction reading of the same score the list sorts by. A
+ * candidate needs at least two shared neighbours to count.
+ */
+export function suggestNotes(
+  adj: AdjMap,
+  source: string,
+  algorithm: ProximityAlgorithm
+): Suggestion[] {
+  const via = new Map<string, string[]>();
+  const scores = sharedNeighborScores(adj, source, algorithm, via);
+  const neighbors = adj.get(source) ?? new Set<string>();
+
+  const suggestions: Suggestion[] = [];
+  for (const [path, score] of scores) {
+    if (neighbors.has(path)) continue;
+    const shared = via.get(path) as string[];
+    if (shared.length < MIN_SHARED) continue;
+    suggestions.push({ path, score, via: shared });
+  }
+
+  return suggestions.sort(
+    (a, b) => b.score - a.score || b.via.length - a.via.length || a.path.localeCompare(b.path)
+  );
 }
 
 /** How much a PPR tiebreak may move a score. Below the two decimals on display. */
@@ -131,9 +208,10 @@ const PPR_TIEBREAK = 1e-3;
 
 /**
  * Proximity score per note, seeded at `source` and scaled so the strongest
- * neighbour is 1. Adamic-Adar ranks; push-PPR breaks its ties.
+ * neighbour is 1. A shared-neighbour score (Adamic-Adar by default, or
+ * Resource Allocation) ranks; push-PPR breaks its ties.
  *
- * Adamic-Adar carries the ordering because it asks the question the list cares
+ * The shared-neighbour score carries the ordering because it asks the question the list cares
  * about: how much of this note's neighbourhood does that note also sit in? Ties
  * are exact and common, so push-PPR mass, which sees paths of any length, not
  * just the 2-hop ones AA counts, separates them, including the neighbours that
@@ -157,8 +235,14 @@ const PPR_TIEBREAK = 1e-3;
  * is floored just under the weakest real score rather than left blank, since
  * a direct link is still closer than nothing.
  */
-export function proximityScores(adj: AdjMap, source: string): Map<string, number> {
-  const aa = adamicAdar(adj, source);
+export function proximityScores(
+  adj: AdjMap,
+  source: string,
+  algorithm: ProximityAlgorithm = "adamic-adar",
+  /** Notes treated as direct neighbours for the floor, such as unlinked mentions. */
+  extra: Iterable<string> = []
+): Map<string, number> {
+  const aa = sharedNeighborScores(adj, source, algorithm);
   const mass = pushPPR(adj, source);
 
   let aaMax = 0;
@@ -172,7 +256,7 @@ export function proximityScores(adj: AdjMap, source: string): Map<string, number
   }
 
   const scores = new Map<string, number>();
-  const neighbors = adj.get(source) ?? new Set<string>();
+  const neighbors = new Set([...(adj.get(source) ?? []), ...extra]);
   if (pprMax <= 0 && aaMax <= 0) {
     // Nothing reached past the source: its neighbours are all equally close.
     for (const path of neighbors) if (path !== source) scores.set(path, 1);
