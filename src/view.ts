@@ -12,7 +12,16 @@ import type LocalGraphListPlugin from "./main";
 import { buildGroups, getPropertyValue, resolveSortProperty, unwrapLink } from "./graph";
 import { PROXIMITY_PROPERTY, SORT_PROPERTY, type SortKey } from "./settings";
 import { proximityScores } from "./ppr";
-import { findUnlinkedMentions, linkMention, type Mention } from "./mentions";
+import { findUnlinkedMentions, linkMention, type Mention, type MentionScope } from "./mentions";
+
+/** Undocumented internals used to open core search on a tag. */
+interface AppWithInternalPlugins {
+  internalPlugins?: { getPluginById(id: string): unknown };
+}
+
+interface GlobalSearchPlugin {
+  instance?: { openGlobalSearch(query: string): void };
+}
 
 /**
  * Kept at the old plugin id on purpose: the view type is persisted in
@@ -223,7 +232,7 @@ export class LocalGraphListView extends ItemView {
       });
       title.addEventListener("click", (evt) => {
         evt.preventDefault();
-        this.app.workspace.openLinkText(name, file.path, Keymap.isModEvent(evt));
+        void this.app.workspace.openLinkText(name, file.path, Keymap.isModEvent(evt));
       });
 
       if (count > 1) {
@@ -260,7 +269,7 @@ export class LocalGraphListView extends ItemView {
 
     title.addEventListener("click", (evt) => {
       evt.preventDefault();
-      this.app.workspace.openLinkText(
+      void this.app.workspace.openLinkText(
         mention.file.path,
         source.path,
         Keymap.isModEvent(evt)
@@ -296,39 +305,48 @@ export class LocalGraphListView extends ItemView {
         ? `Link all ${mention.count} mentions`
         : `Link "${mention.spans[0]?.name ?? mention.name}"`
     );
-    accept.addEventListener("click", async (evt) => {
+    accept.addEventListener("click", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
-
-      // One link at a time per row: a double click would otherwise link the
-      // first mention and then the next one.
-      if (accept.disabled) return;
-
-      // The rows outlive a file switch by the render debounce, so check the
-      // click is still for the note on screen before writing to it.
-      if (this.getTargetFile()?.path !== source.path) {
-        this.render();
-        return;
-      }
-
-      accept.disabled = true;
-      try {
-        const linked = await linkMention(
-          this.app,
-          source,
-          mention.file,
-          this.plugin.getMentionIndex(),
-          scope
-        );
-        if (linked === 0) new Notice(`No unlinked mention of "${mention.file.basename}" left.`);
-        this.render();
-      } catch (error) {
-        console.error("Graph List: linking failed", error);
-        new Notice(`Could not link "${mention.file.basename}".`);
-      } finally {
-        accept.disabled = false;
-      }
+      void this.acceptMention(accept, source, mention, scope);
     });
+  }
+
+  /** Link the mention, unless the row is busy or no longer for the open note. */
+  private async acceptMention(
+    accept: HTMLButtonElement,
+    source: TFile,
+    mention: Mention,
+    scope: MentionScope
+  ): Promise<void> {
+    // One link at a time per row: a double click would otherwise link the
+    // first mention and then the next one.
+    if (accept.disabled) return;
+
+    // The rows outlive a file switch by the render debounce, so check the
+    // click is still for the note on screen before writing to it.
+    if (this.getTargetFile()?.path !== source.path) {
+      this.render();
+      return;
+    }
+
+    accept.disabled = true;
+    try {
+      const linked = await linkMention(
+        this.app,
+        source,
+        mention.file,
+        this.plugin.getMentionIndex(),
+        scope
+      );
+      if (linked === 0) new Notice(`No unlinked mention of "${mention.file.basename}" left.`);
+      this.render();
+    } catch (error) {
+      console.error("Graph List: linking failed", error);
+      new Notice(`Could not link "${mention.file.basename}".`);
+    } finally {
+      accept.disabled = false;
+    }
   }
 
   /** Mention count, plus the alias that matched when it is not the title. */
@@ -445,7 +463,7 @@ export class LocalGraphListView extends ItemView {
 
     title.addEventListener("click", (evt) => {
       evt.preventDefault();
-      this.app.workspace.openLinkText(file.path, source.path, Keymap.isModEvent(evt));
+      void this.app.workspace.openLinkText(file.path, source.path, Keymap.isModEvent(evt));
     });
 
     title.addEventListener("mouseover", (evt) => {
@@ -530,7 +548,7 @@ export class LocalGraphListView extends ItemView {
     }
 
     if (typeof value !== "string") {
-      parent.createSpan({ cls: "lgl-value", text: String(value) });
+      parent.createSpan({ cls: "lgl-value", text: JSON.stringify(value) });
       return true;
     }
 
@@ -559,7 +577,8 @@ export class LocalGraphListView extends ItemView {
     });
     el.addEventListener("click", (evt) => {
       evt.preventDefault();
-      const search = (this.app as any).internalPlugins?.getPluginById("global-search");
+      const { internalPlugins } = this.app as AppWithInternalPlugins;
+      const search = internalPlugins?.getPluginById("global-search") as GlobalSearchPlugin | null;
       search?.instance?.openGlobalSearch(`tag:${tag}`);
     });
   }
@@ -576,7 +595,7 @@ export class LocalGraphListView extends ItemView {
 
     el.addEventListener("click", (evt) => {
       evt.preventDefault();
-      this.app.workspace.openLinkText(target, sourcePath, Keymap.isModEvent(evt));
+      void this.app.workspace.openLinkText(target, sourcePath, Keymap.isModEvent(evt));
     });
   }
 }

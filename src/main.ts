@@ -48,7 +48,7 @@ export default class LocalGraphListPlugin extends Plugin {
 
     this.addCommand({
       id: "open",
-      name: "Open graph list",
+      name: "Open",
       callback: () => this.activateView(),
     });
 
