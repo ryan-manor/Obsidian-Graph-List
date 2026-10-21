@@ -40,3 +40,7 @@ export function debounce<T extends unknown[]>(callback: (...args: T) => unknown)
   run.run = () => undefined;
   return run;
 }
+
+export function getLinkpath(linktext: string): string {
+  return linktext.split(/[#^|]/)[0];
+}

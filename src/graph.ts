@@ -1,13 +1,16 @@
 import { App, TFile, getAllTags } from "obsidian";
-import { PROXIMITY_PROPERTY, type LocalGraphListSettings } from "./settings";
+import type { LocalGraphListSettings } from "./settings";
 
 export type Direction = "out" | "in";
 
 export interface LinkGroup {
   label: string;
   files: TFile[];
+  /** The one direction this group holds, or undefined when merged. */
+  direction?: Direction;
 }
 
+/** Canvases and bases count as notes; images, PDFs and other attachments do not. */
 const NOTE_EXTENSIONS = new Set(["md", "canvas", "base"]);
 
 /**
@@ -34,7 +37,7 @@ export function collectNeighbors(
       if (path === file.path) continue;
       const target = app.vault.getAbstractFileByPath(path);
       if (!(target instanceof TFile)) continue;
-      if (!settings.includeAttachments && !NOTE_EXTENSIONS.has(target.extension)) continue;
+      if (!NOTE_EXTENSIONS.has(target.extension)) continue;
       files.push(target);
     }
     return files;
@@ -43,52 +46,38 @@ export function collectNeighbors(
   return { out: toFiles(outPaths), in: toFiles(inPaths) };
 }
 
-/** Groups to render, honouring the separate-directions setting. */
+/**
+ * Groups to render, honouring the separate-directions setting. `unlinked`
+ * holds notes named but not linked in each direction; they sort in with the
+ * linked ones as if the link were there.
+ */
 export function buildGroups(
   app: App,
   file: TFile,
   settings: LocalGraphListSettings,
-  proximity: Map<string, number>
+  proximity: Map<string, number>,
+  unlinked: Record<Direction, TFile[]> = { out: [], in: [] }
 ): LinkGroup[] {
-  const { out, in: inbound } = collectNeighbors(app, file, settings);
+  const linked = collectNeighbors(app, file, settings);
+  const out = dedupe([...linked.out, ...unlinked.out]);
+  const inbound = dedupe([...linked.in, ...unlinked.in]);
 
   if (!settings.separateDirections) {
-    const seen = new Set<string>();
-    const merged: TFile[] = [];
-    for (const neighbor of [...out, ...inbound]) {
-      if (seen.has(neighbor.path)) continue;
-      seen.add(neighbor.path);
-      merged.push(neighbor);
-    }
+    const merged = dedupe([...out, ...inbound]);
     return [
       { label: "Linked notes", files: sortFiles(app, merged, settings, proximity) },
     ];
   }
 
   return [
-    { label: "Links to", files: sortFiles(app, out, settings, proximity) },
-    { label: "Linked from", files: sortFiles(app, inbound, settings, proximity) },
+    { label: "Links to", files: sortFiles(app, out, settings, proximity), direction: "out" },
+    { label: "Linked from", files: sortFiles(app, inbound, settings, proximity), direction: "in" },
   ];
 }
 
-/**
- * The concrete property key behind the `sort` pseudo-property, so the value on
- * display is always the one the list is ordered by. Null when sorting by title,
- * which the row already shows.
- */
-export function resolveSortProperty(settings: LocalGraphListSettings): string | null {
-  switch (settings.sortKey) {
-    case "proximity":
-      return PROXIMITY_PROPERTY;
-    case "created":
-      return "file.ctime";
-    case "modified":
-      return "file.mtime";
-    case "property":
-      return settings.sortProperty || null;
-    case "title":
-      return null;
-  }
+function dedupe(files: TFile[]): TFile[] {
+  const seen = new Set<string>();
+  return files.filter((file) => !seen.has(file.path) && Boolean(seen.add(file.path)));
 }
 
 /**

@@ -9,12 +9,33 @@ import {
 } from "obsidian";
 import {
   DEFAULT_SETTINGS,
+  RETIRED_PROPERTIES,
   LocalGraphListSettingTab,
   LocalGraphListSettings,
 } from "./settings";
 import { LocalGraphListView, VIEW_TYPE_LOCAL_GRAPH_LIST } from "./view";
 import { buildAdjacency, type AdjMap } from "./ppr";
-import { buildMentionIndex, linkMentions, type MentionIndex } from "./mentions";
+import {
+  buildMentionIndex,
+  findInboundMentions,
+  linkMentions,
+  type Mention,
+  type MentionIndex,
+} from "./mentions";
+
+/**
+ * Inbound mentions of one note, kept while that note stays open. Only notes
+ * that changed since are scanned again; a new mention index means new names,
+ * so it starts over.
+ */
+interface InboundCache {
+  target: string;
+  index: MentionIndex;
+  found: Map<string, Mention>;
+  dirty: Set<string>;
+  /** Scans run one after another, so a render never reads a half-filled map. */
+  ready: Promise<void>;
+}
 
 export default class LocalGraphListPlugin extends Plugin {
   settings: LocalGraphListSettings = DEFAULT_SETTINGS;
@@ -24,6 +45,8 @@ export default class LocalGraphListPlugin extends Plugin {
 
   /** Every title and alias in the vault, rebuilt only when names change. */
   private mentionIndex: MentionIndex | null = null;
+
+  private inbound: InboundCache | null = null;
 
   /**
    * Per-file link targets and aliases as of the last build, so an edit that
@@ -44,7 +67,7 @@ export default class LocalGraphListPlugin extends Plugin {
       (leaf) => new LocalGraphListView(leaf, this)
     );
 
-    this.addRibbonIcon("list-tree", "Graph List", () => this.activateView());
+    this.addRibbonIcon("list-plus", "Graph List", () => this.activateView());
 
     this.addCommand({
       id: "open",
@@ -73,6 +96,7 @@ export default class LocalGraphListPlugin extends Plugin {
     this.registerEvent(
       this.app.metadataCache.on("changed", (file, _data, cache) => {
         this.changedPaths.add(file.path);
+        this.markInboundDirty(file.path);
         this.checkAliases(file, cache);
       })
     );
@@ -103,6 +127,7 @@ export default class LocalGraphListPlugin extends Plugin {
   private onStructureChange(file: TAbstractFile, oldPath?: string): void {
     this.adjacency = null;
     this.mentionIndex = null;
+    this.inbound = null;
     this.structureChanged = true;
     this.changedPaths.add(file.path);
     if (oldPath) this.changedPaths.add(oldPath);
@@ -175,6 +200,56 @@ export default class LocalGraphListPlugin extends Plugin {
   }
 
   /**
+   * Notes that name `target` without linking it, keyed by source path. The
+   * first call for a note reads the whole vault; later ones rescan only the
+   * notes that changed since.
+   */
+  async getInboundMentions(target: TFile): Promise<Map<string, Mention>> {
+    const index = this.getMentionIndex();
+    let cache = this.inbound;
+    let full = false;
+
+    if (!cache || cache.target !== target.path || cache.index !== index) {
+      cache = { target: target.path, index, found: new Map(), dirty: new Set(), ready: Promise.resolve() };
+      this.inbound = cache;
+      full = true;
+    }
+
+    const current = cache;
+    current.ready = current.ready.then(async () => {
+      let sources: TFile[];
+      if (full) {
+        sources = this.app.vault.getMarkdownFiles();
+      } else {
+        sources = [];
+        for (const path of current.dirty) {
+          current.found.delete(path);
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (file instanceof TFile) sources.push(file);
+        }
+      }
+      current.dirty.clear();
+
+      const found = await findInboundMentions(this.app, target, index, sources);
+      for (const [path, mention] of found) current.found.set(path, mention);
+    });
+
+    try {
+      await current.ready;
+    } catch (error) {
+      // A failed scan must not poison every later render of this note.
+      if (this.inbound === current) this.inbound = null;
+      throw error;
+    }
+    return current.found;
+  }
+
+  /** Rescan `path` the next time inbound mentions are asked for. */
+  markInboundDirty(path: string): void {
+    this.inbound?.dirty.add(path);
+  }
+
+  /**
    * Link every leftover mention of notes this one already links, in one undo
    * step. Scoped to notes you have linked yourself, so a bulk action never
    * acts on a suggestion you have not accepted.
@@ -209,8 +284,8 @@ export default class LocalGraphListPlugin extends Plugin {
   async loadSettings() {
     const saved = (await this.loadData()) as Partial<LocalGraphListSettings> | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
-    // The settings tab edits this array in place, so it must not be the default's.
-    this.settings.properties = [...this.settings.properties];
+    // A fresh array, since the settings tab edits it in place, minus retired keys.
+    this.settings.properties = this.settings.properties.filter((key) => !RETIRED_PROPERTIES.has(key));
   }
 
   async saveSettings() {

@@ -197,6 +197,13 @@ test("notes in another component get no score", () => {
   assert.ok(!scores.has("away"));
 });
 
+test("extra notes are floored like direct neighbours", () => {
+  const adj = graph([["s", "a"], ["s", "b"], ["a", "b"], ["far", "away"]]);
+  const scores = proximityScores(adj, "s", "adamic-adar", ["far"]);
+  assert.ok((scores.get("far") ?? 0) > 0);
+  assert.ok(!scores.has("away"));
+});
+
 test("an isolated source gets an empty list", () => {
   assert.equal(proximityScores(new Map([["s", new Set()]]), "s").size, 0);
 });

@@ -238,7 +238,9 @@ const PPR_TIEBREAK = 1e-3;
 export function proximityScores(
   adj: AdjMap,
   source: string,
-  algorithm: ProximityAlgorithm = "adamic-adar"
+  algorithm: ProximityAlgorithm = "adamic-adar",
+  /** Notes treated as direct neighbours for the floor, such as unlinked mentions. */
+  extra: Iterable<string> = []
 ): Map<string, number> {
   const aa = sharedNeighborScores(adj, source, algorithm);
   const mass = pushPPR(adj, source);
@@ -254,7 +256,7 @@ export function proximityScores(
   }
 
   const scores = new Map<string, number>();
-  const neighbors = adj.get(source) ?? new Set<string>();
+  const neighbors = new Set([...(adj.get(source) ?? []), ...extra]);
   if (pprMax <= 0 && aaMax <= 0) {
     // Nothing reached past the source: its neighbours are all equally close.
     for (const path of neighbors) if (path !== source) scores.set(path, 1);

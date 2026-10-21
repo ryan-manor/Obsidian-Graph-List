@@ -2,7 +2,8 @@ import { App, Editor, MarkdownView, TFile, parseFrontMatterAliases } from "obsid
 
 /**
  * Outbound unlinked mentions: text in this note that names another note but
- * isn't a link yet.
+ * isn't a link yet. Inbound ones are the same thing seen from the other side,
+ * see `findInboundMentions`.
  *
  * Obsidian's own pane matches case-insensitive substrings and renders one row
  * per occurrence, which on a working note is mostly noise: `Bases-style` counts
@@ -181,6 +182,58 @@ export async function findUnlinkedMentions(
 
   const text = await app.vault.cachedRead(file);
   return scanMentions(app, file, text, blockedRanges(text), index);
+}
+
+/**
+ * Inbound unlinked mentions: notes among `sources` that name `target` without
+ * linking it there, keyed by source path. Each value is the target's mention as
+ * seen from that source, so the link button writes into the source with the
+ * same matcher and rules as an outbound row.
+ *
+ * A common name like "Style" turns up in hundreds of notes, mostly inside
+ * longer words, links or code, so the target's own names are tried first,
+ * cheapest test first, and only notes with a clean match get the full scan
+ * that settles overlaps with every other title.
+ */
+export async function findInboundMentions(
+  app: App,
+  target: TFile,
+  index: MentionIndex,
+  sources: Iterable<TFile>
+): Promise<Map<string, Mention>> {
+  const found = new Map<string, Mention>();
+  if (target.extension !== "md") return found;
+
+  const own: Candidate[] = [];
+  for (const candidates of index.values()) {
+    for (const candidate of candidates) {
+      if (candidate.file.path === target.path) own.push(candidate);
+    }
+  }
+  if (own.length === 0) return found;
+
+  const ignored = makeIgnoreTest(app);
+  const matches = (text: string, lower: string, blocked: Range[]) =>
+    own.some((candidate) => findOccurrences(text, lower, candidate, blocked).length > 0);
+
+  for (const source of sources) {
+    if (source.extension !== "md" || source.path === target.path || ignored(source.path)) continue;
+
+    const text = await app.vault.cachedRead(source);
+    const lower = toLowerKeepingOffsets(text);
+    if (!own.some((candidate) => lower.includes(candidate.lower))) continue;
+    if (!matches(text, lower, [])) continue;
+
+    const blocked = blockedRanges(text);
+    if (!matches(text, lower, blocked)) continue;
+
+    const mention = scanMentions(app, source, text, blocked, index).find(
+      (entry) => entry.file.path === target.path
+    );
+    if (mention) found.set(source.path, mention);
+  }
+
+  return found;
 }
 
 /**
@@ -583,9 +636,10 @@ export async function linkMentions(
       .filter((group) => group.spans.length > 0);
   };
 
-  const editor = openEditor(app, source);
+  const open = openEditor(app, source);
 
-  if (editor) {
+  if (open) {
+    const { editor } = open;
     const text = editor.getValue();
     const groups = groupsIn(text);
     if (groups.length === 0) return { links: 0, notes: 0 };
@@ -599,6 +653,9 @@ export async function linkMentions(
     );
 
     editor.transaction({ changes });
+    // The list is built from the saved note and its parsed links, which would
+    // otherwise wait out the editor's autosave delay before the row turns solid.
+    await open.save?.();
     return { links: changes.length, notes: groups.length };
   }
 
@@ -658,14 +715,22 @@ function linkTargetsIn(app: App, source: TFile, text: string): Set<string> {
 
 const LINK_TARGET = /\[\[([^\]\n]+)\]\]|\]\(<?([^)>\s]+)>?\)/g;
 
+interface OpenEditor {
+  editor: Editor;
+  /** Writes the editor's text to disk now, when the view can. */
+  save?: () => Promise<void>;
+}
+
 /**
  * An editor showing `file`, wherever it is open: the active one first, then
  * any other pane, split or popout. A disk write while any of them holds unsaved
  * text would be overwritten by that editor's next save, or overwrite it.
  */
-function openEditor(app: App, file: TFile): Editor | null {
+function openEditor(app: App, file: TFile): OpenEditor | null {
   const active = app.workspace.activeEditor;
-  if (active?.file?.path === file.path && active.editor) return active.editor;
+  if (active?.file?.path === file.path && active.editor) {
+    return { editor: active.editor, save: saverFor(active) };
+  }
 
   const views: MarkdownView[] = [];
   app.workspace.iterateAllLeaves((leaf) => {
@@ -673,7 +738,13 @@ function openEditor(app: App, file: TFile): Editor | null {
       views.push(leaf.view);
     }
   });
-  return views[0]?.editor ?? null;
+  const view = views[0];
+  return view?.editor ? { editor: view.editor, save: saverFor(view) } : null;
+}
+
+function saverFor(view: unknown): (() => Promise<void>) | undefined {
+  if (!(view instanceof MarkdownView) || typeof view.save !== "function") return undefined;
+  return () => view.save();
 }
 
 /** One target's mentions, from the row's link button. Returns how many linked. */

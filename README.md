@@ -1,13 +1,14 @@
 # Graph List
 
 The local graph, rendered as a list instead of a force-directed blob, with the
-unlinked mentions pane folded into the same list.
+outgoing links and backlinks panes, unlinked mentions in both directions
+included, folded into the same list.
 
 A sidebar is tall and narrow, so a graph canvas wastes most of it and a table
 view needs horizontal scrolling. This view takes the same data the local graph
 uses (resolved inbound and outbound links for the active note) and renders it
 the way a Bases list view does: title, then the properties you picked
-underneath.
+underneath, or the line each link sits on.
 
 ## What it shows
 
@@ -16,13 +17,13 @@ underneath.
 - **Unresolved**, links to notes that do not exist yet. Clicking one creates the
   note, same as anywhere else in Obsidian. With these, the four surfaces this
   replaces are all accounted for: outgoing, inbound, unlinked mentions, broken.
-- Any frontmatter property under each title. Empty values are skipped, so rows
-  stay tight.
-- `sort`, a pseudo-property that always shows the value the list is ordered by,
-  so the date on the row is the date it sorted on. It follows the sort setting,
-  including changes made from the view header.
-- `proximity`, the graph score described below, available as a column even when
-  you are sorting on something else.
+- Unlinked mentions both ways, ranked in the list as if they were linked: notes
+  this one names, and notes that name this one (the backlinks pane's unlinked
+  mentions). Each row's button writes the link where it belongs.
+- Under each title, either chosen frontmatter properties (empty values are
+  skipped, so rows stay tight) or the link's context: the line the link sits
+  on, with the link picked out. The first link when there are several, the
+  mention itself for an unlinked row. Clicking the line opens that note there.
 - `file.*` pseudo-properties: `file.name`, `file.path`, `file.folder`,
   `file.ext`, `file.ctime`, `file.mtime`, `file.size`, `file.tags`.
 - Tags as clickable pills, wikilink values as working links.
@@ -42,13 +43,13 @@ writes to the same settings.
 | Sort direction | Ascending / descending. Notes missing the sort value always land last |
 | Algorithm | Adamic-Adar or Resource Allocation, for proximity and suggestions |
 | Depth | 1 lists linked notes; 2 adds a Suggested group of notes two links away |
-| Show score | Show or hide the proximity score on rows |
 | Separate inbound and outbound | Two groups, or one flat list |
-| Shown under each title | Which properties appear; drag to reorder. `sort` tracks the sort key |
+| Under each title | Properties, or the line the link sits on |
+| Shown under each title | Which properties appear; drag to reorder |
 | Show property names | Label each value with its key |
 | Number rows | Running count beside each title |
-| Include attachments | Show linked images and PDFs alongside notes |
-| Show unlinked mentions | Append notes this one names but does not link |
+| Show unlinked mentions | Notes this one names but does not link, ranked as ghost rows |
+| Show mentions in other notes | Notes that name this one but do not link it, as ghost rows |
 | Link | Whether the link button links the first mention or all of them |
 
 ## Ranking by graph proximity
@@ -91,10 +92,10 @@ to the note.
 
 ## Unlinked mentions
 
-Notes named in the text but not linked are appended to the outbound group as ghost rows,
-with a mention count and a link button. Accepting one re-renders the list, so the row
-turns solid and sorts with the rest. If the target already has a row (an inbound link in
-the flat list), the button goes on that row instead of a duplicate ghost.
+Notes named in the text but not linked join the outbound group (or the flat list) as ghost
+rows, sorted with the linked ones as if the link already existed, with a mention count and
+a link button. Accepting one only turns the row solid. If the target already has a row (an
+inbound link in the flat list), the button goes on that row instead of a duplicate ghost.
 
 The **Link** setting decides what the button converts:
 
@@ -145,7 +146,24 @@ across 3 survive here. The filtering is structural, not a ranking:
 What survives that is either specific enough to be right or ambiguous in a way only
 meaning can settle, for example "ACL" meaning Andersen-Chung-Lang in a note about
 PageRank rather than the Adobe Context Layer wiki. Proximity does not help there:
-an unlinked candidate usually shares no neighbours with the note, so it scores zero.
+an unlinked candidate usually shares no neighbours with the note. For ranking it gets the
+same floor as a direct link that shares nothing.
+
+### Inbound
+
+Inbound mentions are the same matcher run from the other side: every other note is scanned
+for this note's title and aliases, and each note with a clean match joins the Linked from
+group (or the flat list) as a ghost row, with an "N mentions of this" count and a link
+button that writes into that note (through its editor if it is open). A row can carry both
+buttons when the two notes name each other. Nothing is capped, so a note with a common alias like "Style" lists every note
+that says it, the way the backlinks pane does. The Link setting applies here too: in
+first-mention mode a note that already links this one is done.
+
+A common name turns up in hundreds of notes, mostly inside longer words, links or code, so
+each note is tested cheaply against the target's own names first and only clean matches get
+the full scan. The first render of a note reads the vault (about 20ms typically, 160ms for
+a hub with a one-word alias, on 3,700 notes); after that only notes that changed are
+rescanned.
 
 ## Development
 

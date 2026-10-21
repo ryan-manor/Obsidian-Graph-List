@@ -4,6 +4,7 @@ import { MarkdownView, type App, type TFile } from "obsidian";
 import {
   blockedRanges,
   buildMentionIndex,
+  findInboundMentions,
   inTable,
   linkForSpan,
   linkMentions,
@@ -358,4 +359,29 @@ test("first scope does not link again once the text already links the target", a
   assert.equal((await linkMentions(instance, SOURCE, index, "first", style)).links, 1);
   assert.equal((await linkMentions(instance, SOURCE, index, "first", style)).links, 0);
   assert.equal(value, "[[Style]] here, and Style there.");
+});
+
+test("finds inbound mentions from each source's side", async () => {
+  const OTHER = file("Notes/Other.md");
+  const texts = new Map<string, string>([
+    [SOURCE.path, "Lr notes, and Lightroom again."],
+    // The longer title owns the overlap, so this is not a mention of Lightroom.
+    [OTHER.path, "Lightroom Classic only."],
+    [STYLE.path, "Already [[Adobe Lightroom]], then Lightroom."],
+    [LIGHTROOM.path, "Lightroom names itself."],
+  ]);
+  const instance = app({ [STYLE.path]: { [LIGHTROOM.path]: 1 } }, {
+    vault: { getConfig: () => [], cachedRead: async (source: TFile) => texts.get(source.path) ?? "" },
+  });
+
+  const found = await findInboundMentions(
+    instance,
+    LIGHTROOM,
+    buildMentionIndex(instance),
+    [SOURCE, OTHER, STYLE, LIGHTROOM]
+  );
+  assert.deepEqual(
+    [...found].map(([path, mention]) => [path, mention.count, mention.linked]),
+    [[SOURCE.path, 2, false], [STYLE.path, 1, true]]
+  );
 });
