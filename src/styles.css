@@ -135,14 +135,19 @@
   text-align: center;
 }
 
-.lgl-property-row {
-  padding-top: var(--size-4-1);
-  padding-bottom: var(--size-4-1);
-  border-top: none;
+/* Property rows have no label: the text field is the whole row. Scoped to
+   the modal so it outranks themes that style settings rows there. */
+.modal .setting-item.lgl-property-row .setting-item-info {
+  display: none;
 }
 
-.lgl-empty-properties {
-  padding-bottom: var(--size-4-2);
+.modal .setting-item.lgl-property-row .setting-item-control {
+  flex: 1;
+  justify-content: flex-start;
+}
+
+.modal .setting-item.lgl-property-row .setting-item-control input {
+  width: 100%;
 }
 
 /* Unlinked mentions: present but not yet part of the graph. The link button
