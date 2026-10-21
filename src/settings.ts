@@ -62,6 +62,11 @@ export const FILE_PROPERTIES = [
   "file.tags",
 ];
 
+/** Undocumented registry behind the Properties view, keyed by property name. */
+interface AppWithPropertyRegistry {
+  metadataTypeManager?: { properties?: Record<string, unknown> };
+}
+
 /**
  * Every property key the vault knows about. Uses the app's property registry
  * when present, and otherwise falls back to scanning frontmatter.
@@ -71,7 +76,7 @@ export function getAllPropertyKeys(app: App): string[] {
   keys.add(SORT_PROPERTY);
   keys.add(PROXIMITY_PROPERTY);
 
-  const registry = (app as any).metadataTypeManager?.properties;
+  const registry = (app as AppWithPropertyRegistry).metadataTypeManager?.properties;
   if (registry && typeof registry === "object") {
     for (const name of Object.keys(registry)) keys.add(name);
   } else {
@@ -191,9 +196,9 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
               this.plugin.settings.sortProperty = value.trim();
               this.commitSoon();
             });
-          new PropertySuggest(this.app, text.inputEl, async (key) => {
+          new PropertySuggest(this.app, text.inputEl, (key) => {
             this.plugin.settings.sortProperty = key;
-            await this.commit();
+            void this.commit();
           });
         });
     }
@@ -277,15 +282,15 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
 
       row.addText((text) => {
         text
-          .setPlaceholder("property name")
+          .setPlaceholder("Property name")
           .setValue(prop)
           .onChange((value) => {
             properties[index] = value.trim();
             this.commitSoon();
           });
-        new PropertySuggest(this.app, text.inputEl, async (key) => {
+        new PropertySuggest(this.app, text.inputEl, (key) => {
           properties[index] = key;
-          await this.commit();
+          void this.commit();
         });
       });
 
