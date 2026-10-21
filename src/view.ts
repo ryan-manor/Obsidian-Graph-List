@@ -147,11 +147,24 @@ export class LocalGraphListView extends ItemView {
   onMetadataResolved(structural: boolean, paths: Set<string>): void {
     if (structural || [...paths].some((path) => this.renderedPaths.has(path))) {
       this.scheduleRender();
-    } else if (paths.size > 0 && this.shown.file?.extension === "md" && this.plugin.settings.showInboundMentions) {
+    } else if (paths.size > 0) {
       // A note off the list may have started naming this one, such as one
       // synced from another device. Rescanning just the changed notes is cheap.
-      void this.refreshInbound(this.shown.file, this.renderToken, this.shown.inbound);
+      const file = this.liveInboundFile();
+      if (file) void this.refreshInbound(file, this.renderToken, this.shown.inbound);
     }
+  }
+
+  /**
+   * The note on screen, if it has a finished scan that only owes rescans of
+   * changed notes. Without one, a refresh would be a whole-vault scan, which
+   * is left to the next render.
+   */
+  private liveInboundFile(): TFile | null {
+    const { file } = this.shown;
+    if (!file || file.extension !== "md" || !this.plugin.settings.showInboundMentions) return null;
+    const state = this.plugin.peekInboundMentions(file)?.state;
+    return state === "fresh" || state === "dirty" ? file : null;
   }
 
   /**
@@ -167,6 +180,14 @@ export class LocalGraphListView extends ItemView {
       return;
     }
     if (token !== this.renderToken) return;
+
+    // A reset mid-scan stops it short, so its result is not the answer: the
+    // render this schedules starts a scan of the new cache.
+    const state = this.plugin.peekInboundMentions(file)?.state;
+    if (state !== "fresh" && state !== "dirty") {
+      this.scheduleRender();
+      return;
+    }
     if (inboundSignature(this.collectInbound(found)) !== inboundSignature(shown)) this.render();
   }
 
@@ -206,9 +227,20 @@ export class LocalGraphListView extends ItemView {
     // goes up with what is known and the scan fills in behind it.
     let inbound = new Map<string, Inbound>();
     if (file?.extension === "md" && this.plugin.settings.showInboundMentions) {
-      const known = this.plugin.peekInboundMentions(file);
+      let known = this.plugin.peekInboundMentions(file);
+      // A few changed notes are quick to rescan, and waiting means their rows
+      // are drawn once, with mention offsets that match the new text.
+      if (known?.state === "dirty") {
+        try {
+          await this.plugin.getInboundMentions(file);
+        } catch (error) {
+          console.error("Graph List: inbound mention scan failed", error);
+        }
+        if (token !== this.renderToken) return;
+        known = this.plugin.peekInboundMentions(file);
+      }
       if (known) inbound = this.collectInbound(known.found);
-      if (!known?.fresh) void this.refreshInbound(file, token, inbound);
+      if (known?.state !== "fresh") void this.refreshInbound(file, token, inbound);
     }
 
     const { contentEl } = this;

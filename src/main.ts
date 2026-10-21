@@ -41,6 +41,11 @@ interface InboundCache {
   complete: boolean;
 }
 
+export interface InboundPeek {
+  found: Map<string, Mention>;
+  state: "fresh" | "dirty" | "stale";
+}
+
 export default class LocalGraphListPlugin extends Plugin {
   settings: LocalGraphListSettings = DEFAULT_SETTINGS;
 
@@ -51,6 +56,9 @@ export default class LocalGraphListPlugin extends Plugin {
   private mentionIndex: MentionIndex | null = null;
 
   private inbound: InboundCache | null = null;
+
+  /** The last finished scan, kept across a reset of the cache. */
+  private lastInbound: { target: string; found: Map<string, Mention> } | null = null;
 
   /**
    * Per-file link targets and aliases as of the last build, so an edit that
@@ -254,6 +262,7 @@ export default class LocalGraphListPlugin extends Plugin {
         for (const path of rescanned ?? []) current.found.delete(path);
         for (const [path, mention] of found) current.found.set(path, mention);
         current.complete = true;
+        this.lastInbound = { target: target.path, found: current.found };
       } finally {
         current.pending -= 1;
       }
@@ -271,15 +280,20 @@ export default class LocalGraphListPlugin extends Plugin {
 
   /**
    * Inbound mentions of `target` as last scanned, without waiting for a scan.
-   * Null until the first full scan of it finishes; `fresh` is false while
-   * notes that changed since are still to be rescanned.
+   * "fresh" is up to date; "dirty" owes a rescan of the few notes that changed
+   * since; "stale" is from before a reset and owes a whole-vault scan. Null
+   * when `target` has never been scanned.
    */
-  peekInboundMentions(target: TFile): { found: Map<string, Mention>; fresh: boolean } | null {
+  peekInboundMentions(target: TFile): InboundPeek | null {
     const cache = this.inbound;
-    if (!cache?.complete || cache.target !== target.path || cache.index !== this.getMentionIndex()) {
-      return null;
+    if (cache?.complete && cache.target === target.path && cache.index === this.getMentionIndex()) {
+      const fresh = cache.pending === 0 && cache.dirty.size === 0;
+      return { found: cache.found, state: fresh ? "fresh" : "dirty" };
     }
-    return { found: cache.found, fresh: cache.pending === 0 && cache.dirty.size === 0 };
+    // A new note or alias resets the cache, but the old rows are nearly all
+    // still right, so they stay up until the new scan replaces them.
+    if (this.lastInbound?.target === target.path) return { found: this.lastInbound.found, state: "stale" };
+    return null;
   }
 
   /** Rescan `path` the next time inbound mentions are asked for. */
