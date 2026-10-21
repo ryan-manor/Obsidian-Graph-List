@@ -11,8 +11,14 @@ import {
 import type LocalGraphListPlugin from "./main";
 import { buildGroups, getPropertyValue, resolveSortProperty, unwrapLink } from "./graph";
 import { PROXIMITY_PROPERTY, SORT_PROPERTY, type SortKey } from "./settings";
-import { proximityScores } from "./ppr";
-import { findUnlinkedMentions, linkMention, type Mention, type MentionScope } from "./mentions";
+import { proximityScores, suggestNotes, type Suggestion } from "./ppr";
+import {
+  findUnlinkedMentions,
+  linkMention,
+  makeIgnoreTest,
+  type Mention,
+  type MentionScope,
+} from "./mentions";
 
 /** Undocumented internals used to open core search on a tag. */
 interface AppWithInternalPlugins {
@@ -44,6 +50,12 @@ function normalizeTags(key: string, value: unknown): unknown {
     typeof entry === "string" && entry && !entry.startsWith("#") ? `#${entry}` : entry;
   return Array.isArray(value) ? value.map(hash) : hash(value);
 }
+
+/** Rows in the Suggested group. A suggestion list is read, not scrolled. */
+const MAX_SUGGESTIONS = 8;
+
+/** Shared neighbours named on a suggestion row before the rest become "+N". */
+const MAX_VIA = 3;
 
 function formatDate(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -153,11 +165,23 @@ export class LocalGraphListView extends ItemView {
 
     this.renderedPaths.add(file.path);
 
-    const proximity = proximityScores(this.plugin.getAdjacency(), file.path);
-    const groups = buildGroups(this.app, file, this.plugin.settings, proximity);
+    const { settings } = this.plugin;
+    const adjacency = this.plugin.getAdjacency();
+    const proximity = proximityScores(adjacency, file.path, settings.algorithm);
+    const groups = buildGroups(this.app, file, settings, proximity);
     const total = groups.reduce((sum, group) => sum + group.files.length, 0);
 
-    if (total === 0 && mentions.length === 0) {
+    // A suggestion that is also an unlinked mention already has a ghost row
+    // with a link button, so it is left to that row.
+    const ghostPaths = new Set(
+      mentions.filter((mention) => !mention.linked).map((mention) => mention.file.path)
+    );
+    const suggestions =
+      settings.depth === 2
+        ? this.collectSuggestions(suggestNotes(adjacency, file.path, settings.algorithm), ghostPaths)
+        : [];
+
+    if (total === 0 && mentions.length === 0 && suggestions.length === 0) {
       contentEl.createDiv({ cls: "lgl-empty", text: "No linked notes." });
       return;
     }
@@ -198,7 +222,80 @@ export class LocalGraphListView extends ItemView {
       });
     });
 
+    this.renderSuggestions(contentEl, file, suggestions, proximity);
     this.renderUnresolved(contentEl, file);
+  }
+
+  /** Suggestions that can be rows: existing notes, not excluded, not already ghosts. */
+  private collectSuggestions(
+    suggestions: Suggestion[],
+    ghostPaths: Set<string>
+  ): { file: TFile; via: TFile[] }[] {
+    const ignored = makeIgnoreTest(this.app);
+    const rows: { file: TFile; via: TFile[] }[] = [];
+
+    for (const suggestion of suggestions) {
+      if (rows.length >= MAX_SUGGESTIONS) break;
+      if (ghostPaths.has(suggestion.path) || ignored(suggestion.path)) continue;
+      const target = this.app.vault.getAbstractFileByPath(suggestion.path);
+      if (!(target instanceof TFile) || target.extension !== "md") continue;
+
+      const via: TFile[] = [];
+      for (const path of suggestion.via) {
+        const shared = this.app.vault.getAbstractFileByPath(path);
+        if (shared instanceof TFile) via.push(shared);
+      }
+      rows.push({ file: target, via });
+    }
+
+    return rows;
+  }
+
+  /**
+   * Notes two links away that this one does not link yet, ranked by the same
+   * shared-neighbour score as the list. Each row names the notes it shares,
+   * which is the reason it is here.
+   */
+  private renderSuggestions(
+    parent: HTMLElement,
+    file: TFile,
+    suggestions: { file: TFile; via: TFile[] }[],
+    proximity: Map<string, number>
+  ): void {
+    if (suggestions.length === 0) return;
+
+    const header = parent.createDiv({ cls: "lgl-group-header" });
+    header.createSpan({ cls: "lgl-group-label", text: "Suggested" });
+    header.createSpan({ cls: "lgl-group-count", text: String(suggestions.length) });
+
+    const list = parent.createDiv({ cls: "lgl-list" });
+    suggestions.forEach((suggestion, index) => {
+      this.renderedPaths.add(suggestion.file.path);
+      this.renderItem(list, suggestion.file, file, index + 1, proximity, undefined, suggestion.via);
+    });
+  }
+
+  /** "Shares 3:" followed by the shared notes as links, strongest first. */
+  private renderVia(propsEl: HTMLElement, via: TFile[], source: TFile): void {
+    const row = propsEl.createDiv({ cls: "lgl-prop lgl-via-row" });
+    const values = row.createDiv({ cls: "lgl-prop-values" });
+    values.createSpan({ cls: "lgl-value lgl-mention-count", text: `Shares ${via.length}:` });
+
+    for (const shared of via.slice(0, MAX_VIA)) {
+      const el = values.createEl("a", {
+        cls: "lgl-value lgl-pill internal-link",
+        text: shared.basename,
+        href: shared.path,
+      });
+      el.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        void this.app.workspace.openLinkText(shared.path, source.path, Keymap.isModEvent(evt));
+      });
+    }
+
+    if (via.length > MAX_VIA) {
+      values.createSpan({ cls: "lgl-value lgl-mention-count", text: `+${via.length - MAX_VIA}` });
+    }
   }
 
   /**
@@ -443,9 +540,10 @@ export class LocalGraphListView extends ItemView {
     source: TFile,
     index: number,
     proximity: Map<string, number>,
-    mention?: Mention
+    mention?: Mention,
+    via?: TFile[]
   ): void {
-    const item = parent.createDiv({ cls: "lgl-item" });
+    const item = parent.createDiv({ cls: via ? "lgl-item lgl-suggested" : "lgl-item" });
     if (mention) {
       item.addClass("lgl-has-mentions");
       this.renderAcceptButton(item, mention, source);
@@ -490,6 +588,7 @@ export class LocalGraphListView extends ItemView {
       const key =
         prop === SORT_PROPERTY ? resolveSortProperty(this.plugin.settings) : prop;
       if (!key) continue;
+      if (key === PROXIMITY_PROPERTY && !this.plugin.settings.showScore) continue;
 
       const value =
         key === PROXIMITY_PROPERTY
@@ -506,6 +605,7 @@ export class LocalGraphListView extends ItemView {
     }
 
     if (mention) this.renderMentionSummary(propsEl, mention);
+    if (via) this.renderVia(propsEl, via, source);
 
     if (propsEl.childElementCount === 0) propsEl.remove();
   }

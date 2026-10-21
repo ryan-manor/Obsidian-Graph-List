@@ -40,6 +40,9 @@ writes to the same settings.
 | --- | --- |
 | Sort by | Graph proximity, created time, modified time, a property, or title |
 | Sort direction | Ascending / descending. Notes missing the sort value always land last |
+| Algorithm | Adamic-Adar or Resource Allocation, for proximity and suggestions |
+| Depth | 1 lists linked notes; 2 adds a Suggested group of notes two links away |
+| Show score | Show or hide the proximity score on rows |
 | Separate inbound and outbound | Two groups, or one flat list |
 | Shown under each title | Which properties appear; drag to reorder. `sort` tracks the sort key |
 | Show property names | Label each value with its key |
@@ -73,6 +76,18 @@ sweep quantity, mass/degree, inverts that: on a note about Seek's specificity
 boost it put a two-link daily note first and buried the project home page last
 at 0.09. Sweep order is built for finding cluster boundaries, not for ranking
 inside a neighbourhood.
+
+### Resource Allocation and suggestions
+
+Resource Allocation (Zhou, Lü and Zhang, 2009) is the same sum with `1/degree` in place of
+`1/log(degree)`. A shared note with 72 links counts for a quarter under Adamic-Adar and a
+seventy-second under RA, so on a vault full of daily notes and MOCs it leans on the small,
+specific notes two pages have in common.
+
+At depth 2 the same score is read as link prediction: notes this one does not link, that
+share at least two neighbours with it, top eight, each labelled with the notes it shares.
+Notes already showing as unlinked mentions are left to their ghost rows. Nothing is written
+to the note.
 
 ## Unlinked mentions
 

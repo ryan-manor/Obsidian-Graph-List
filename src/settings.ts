@@ -10,6 +10,7 @@ import {
 } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 import type { MentionScope } from "./mentions";
+import type { ProximityAlgorithm } from "./ppr";
 
 /** Display key that follows whatever the list is sorted by. */
 export const SORT_PROPERTY = "sort";
@@ -44,6 +45,12 @@ export interface LocalGraphListSettings {
   showMentions: boolean;
   /** Whether the link button converts the first mention of a note or all of them. */
   mentionScope: MentionScope;
+  /** How shared neighbours are discounted by their degree. */
+  algorithm: ProximityAlgorithm;
+  /** 1 lists linked notes; 2 also suggests unlinked notes two links away. */
+  depth: 1 | 2;
+  /** Render the proximity score on rows, directly or through `sort`. */
+  showScore: boolean;
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
@@ -57,6 +64,9 @@ export const DEFAULT_SETTINGS: LocalGraphListSettings = {
   includeAttachments: false,
   showMentions: true,
   mentionScope: "first",
+  algorithm: "adamic-adar",
+  depth: 1,
+  showScore: true,
 };
 
 /** Pseudo-properties read off the file itself rather than frontmatter. */
@@ -153,13 +163,16 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
-    return this.plugin.settings[key as keyof LocalGraphListSettings];
+    const value = this.plugin.settings[key as keyof LocalGraphListSettings];
+    // Dropdown options are strings; depth is stored as a number.
+    return key === "depth" ? String(value) : value;
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
-    (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
-    // The mention scope rewrites its own description; the rest only show or hide rows.
-    if (key === "mentionScope") await this.commitAndUpdate();
+    (this.plugin.settings as unknown as Record<string, unknown>)[key] =
+      key === "depth" ? Number(value) : value;
+    // These rewrite their own descriptions; the rest only show or hide rows.
+    if (key === "mentionScope" || key === "algorithm") await this.commitAndUpdate();
     else {
       await this.commit();
       this.refreshDomState();
@@ -169,6 +182,7 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       this.sortDefinitions(),
+      this.graphDefinitions(),
       this.listDefinitions(),
       this.propertyDefinitions(),
       this.propertyListDefinitions(),
@@ -226,6 +240,48 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
             key: "sortDirection",
             options: { asc: "Ascending", desc: "Descending" },
           },
+        },
+      ],
+    };
+  }
+
+  private graphDefinitions(): SettingDefinitionGroup {
+    const { settings } = this.plugin;
+
+    return {
+      type: "group",
+      heading: "Graph",
+      items: [
+        {
+          name: "Algorithm",
+          desc:
+            settings.algorithm === "adamic-adar"
+              ? "Adamic-Adar: each shared neighbour counts 1/log(its links), so busy notes are discounted gently."
+              : "Resource allocation: each shared neighbour counts 1/(its links), so a daily note or hub page counts for almost nothing.",
+          control: {
+            type: "dropdown",
+            key: "algorithm",
+            options: {
+              "adamic-adar": "Adamic-Adar",
+              "resource-allocation": "Resource allocation",
+            },
+          },
+        },
+        {
+          name: "Depth",
+          desc:
+            "At 2, a Suggested group lists notes this one does not link yet but shares at " +
+            "least two neighbours with, each with the notes they share.",
+          control: {
+            type: "dropdown",
+            key: "depth",
+            options: { "1": "1: linked notes", "2": "2: also suggest related notes" },
+          },
+        },
+        {
+          name: "Show score",
+          desc: `The proximity score under each title, through "${PROXIMITY_PROPERTY}" or "${SORT_PROPERTY}"`,
+          control: { type: "toggle", key: "showScore" },
         },
       ],
     };

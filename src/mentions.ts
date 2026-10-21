@@ -135,7 +135,7 @@ function linkSuggestions(app: App): LinkSuggestion[] {
  * metadata cache at runtime but is not in obsidian.d.ts, so fall back to the
  * raw filter list: each entry is a path fragment, or a regex when slash-wrapped.
  */
-function makeIgnoreTest(app: App): (path: string) => boolean {
+export function makeIgnoreTest(app: App): (path: string) => boolean {
   const cache = app.metadataCache as unknown as {
     isUserIgnored?: (path: string) => boolean;
   };

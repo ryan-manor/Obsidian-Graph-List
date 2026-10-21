@@ -199,3 +199,17 @@
 .lgl-accept:focus-visible {
   opacity: 1;
 }
+
+/* Suggestions: related through shared neighbours, not linked. Quieter than a
+   real row, but not italic, since nothing in the text names them. */
+.lgl-suggested {
+  opacity: 0.7;
+}
+
+.lgl-suggested:hover {
+  opacity: 1;
+}
+
+.lgl-via-row .lgl-pill {
+  text-decoration: none;
+}

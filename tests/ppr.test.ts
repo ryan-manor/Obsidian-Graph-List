@@ -5,6 +5,8 @@ import {
   buildAdjacency,
   proximityScores,
   pushPPR,
+  resourceAllocation,
+  suggestNotes,
   type AdjMap,
 } from "../src/ppr";
 
@@ -215,4 +217,67 @@ test("a hub neighbour the push never reaches still gets a score", () => {
   for (const [path, score] of scores) {
     if (path !== "hub") assert.ok(hub < score, `hub ${hub} vs ${path} ${score}`);
   }
+});
+
+test("Resource Allocation weighs a shared neighbour by 1/degree", () => {
+  const edges: [string, string][] = [
+    ["s", "small"], ["small", "quiet"],
+    ["s", "daily"], ["daily", "busy"],
+  ];
+  for (let i = 0; i < 8; i++) edges.push(["daily", `other${i}`]);
+  const ra = resourceAllocation(graph(edges), "s");
+
+  assert.ok(Math.abs((ra.get("quiet") as number) - 1 / 2) < 1e-12);
+  assert.ok(Math.abs((ra.get("busy") as number) - 1 / 10) < 1e-12);
+});
+
+test("Resource Allocation discounts hubs harder than Adamic-Adar", () => {
+  // `niche` shares two small notes; `popular` shares one small note and a hub.
+  const edges: [string, string][] = [
+    ["s", "a"], ["a", "niche"], ["s", "b"], ["b", "niche"],
+    ["s", "c"], ["c", "popular"], ["s", "hub"], ["hub", "popular"],
+  ];
+  for (let i = 0; i < 6; i++) edges.push(["hub", `leaf${i}`]);
+  const adj = graph(edges);
+  const ra = resourceAllocation(adj, "s");
+  const aa = adamicAdar(adj, "s");
+
+  const raShare = (1 / 8) / (ra.get("popular") as number);
+  const aaShare = (1 / Math.log(8)) / (aa.get("popular") as number);
+  assert.ok(raShare < aaShare, `hub share RA ${raShare} vs AA ${aaShare}`);
+});
+
+test("proximity follows the chosen algorithm", () => {
+  const ra = proximityScores(CLUSTERS, "s", "resource-allocation");
+  const raw = resourceAllocation(CLUSTERS, "s");
+  const max = Math.max(...raw.values());
+  assert.ok(Math.abs((ra.get("b") as number) - (raw.get("b") as number) / max) <= 1e-3);
+});
+
+test("suggestions are unlinked notes with at least two shared neighbours", () => {
+  // `two` shares a and b with s; `one` shares only a; `linked` is a neighbour.
+  const adj = graph([
+    ["s", "a"], ["s", "b"], ["s", "linked"],
+    ["a", "two"], ["b", "two"], ["a", "one"], ["a", "linked"], ["b", "linked"],
+  ]);
+  const paths = suggestNotes(adj, "s", "adamic-adar").map((suggestion) => suggestion.path);
+  assert.deepEqual(paths, ["two"]);
+});
+
+test("suggestions rank by score and list shared neighbours strongest first", () => {
+  const edges: [string, string][] = [
+    ["s", "small"], ["s", "mid"], ["s", "hub"],
+    ["small", "best"], ["mid", "best"],
+    ["mid", "next"], ["hub", "next"],
+  ];
+  for (let i = 0; i < 10; i++) edges.push(["hub", `leaf${i}`]);
+  const suggestions = suggestNotes(graph(edges), "s", "resource-allocation");
+
+  assert.deepEqual(suggestions.map((suggestion) => suggestion.path), ["best", "next"]);
+  assert.deepEqual(suggestions[0].via, ["small", "mid"]);
+  assert.deepEqual(suggestions[1].via, ["mid", "hub"]);
+});
+
+test("a note outside the graph gets no suggestions", () => {
+  assert.deepEqual(suggestNotes(CLUSTERS, "missing", "resource-allocation"), []);
 });
