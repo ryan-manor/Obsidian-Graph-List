@@ -73,6 +73,14 @@ const MAX_SUGGESTIONS = 8;
 /** Shared neighbours named on a suggestion row before the rest become "+N". */
 const MAX_VIA = 3;
 
+/** What an inbound row shows: which notes, whether linked, where the mention is. */
+function inboundSignature(inbound: Map<string, Inbound>): string {
+  return [...inbound]
+    .map(([path, mention]) => `${path}:${mention.linked ? 1 : 0}:${mention.spans.map((span) => span.start).join(",")}`)
+    .sort()
+    .join("\n");
+}
+
 function formatDate(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -91,6 +99,9 @@ export class LocalGraphListView extends ItemView {
 
   /** Discards an in-flight render whose mention scan was overtaken. */
   private renderToken = 0;
+
+  /** The note on screen and the inbound mentions its rows were built from. */
+  private shown: { file: TFile | null; inbound: Map<string, Inbound> } = { file: null, inbound: new Map() };
 
   constructor(leaf: WorkspaceLeaf, plugin: LocalGraphListPlugin) {
     super(leaf);
@@ -136,7 +147,48 @@ export class LocalGraphListView extends ItemView {
   onMetadataResolved(structural: boolean, paths: Set<string>): void {
     if (structural || [...paths].some((path) => this.renderedPaths.has(path))) {
       this.scheduleRender();
+    } else if (paths.size > 0) {
+      // A note off the list may have started naming this one, such as one
+      // synced from another device. Rescanning just the changed notes is cheap.
+      const file = this.liveInboundFile();
+      if (file) void this.refreshInbound(file, this.renderToken, this.shown.inbound);
     }
+  }
+
+  /**
+   * The note on screen, if it has a finished scan that only owes rescans of
+   * changed notes. Without one, a refresh would be a whole-vault scan, which
+   * is left to the next render.
+   */
+  private liveInboundFile(): TFile | null {
+    const { file } = this.shown;
+    if (!file || file.extension !== "md" || !this.plugin.settings.showInboundMentions) return null;
+    const state = this.plugin.peekInboundMentions(file)?.state;
+    return state === "fresh" || state === "dirty" ? file : null;
+  }
+
+  /**
+   * Bring inbound mentions up to date and render again, but only if the rows
+   * would change: most rescans find what is already on screen.
+   */
+  private async refreshInbound(file: TFile, token: number, shown: Map<string, Inbound>): Promise<void> {
+    let found: Map<string, Mention>;
+    try {
+      found = await this.plugin.getInboundMentions(file);
+    } catch (error) {
+      console.error("Graph List: inbound mention scan failed", error);
+      return;
+    }
+    if (token !== this.renderToken) return;
+
+    // A reset mid-scan stops it short, so its result is not the answer: the
+    // render this schedules starts a scan of the new cache.
+    const state = this.plugin.peekInboundMentions(file)?.state;
+    if (state !== "fresh" && state !== "dirty") {
+      this.scheduleRender();
+      return;
+    }
+    if (inboundSignature(this.collectInbound(found)) !== inboundSignature(shown)) this.render();
   }
 
   /** Last markdown-ish file the user looked at, ignoring this sidebar view. */
@@ -171,20 +223,31 @@ export class LocalGraphListView extends ItemView {
       }
     }
 
+    // Inbound mentions take a whole-vault scan the first time, so the list
+    // goes up with what is known and the scan fills in behind it.
     let inbound = new Map<string, Inbound>();
     if (file?.extension === "md" && this.plugin.settings.showInboundMentions) {
-      try {
-        inbound = this.collectInbound(await this.plugin.getInboundMentions(file));
-      } catch (error) {
-        console.error("Graph List: inbound mention scan failed", error);
+      let known = this.plugin.peekInboundMentions(file);
+      // A few changed notes are quick to rescan, and waiting means their rows
+      // are drawn once, with mention offsets that match the new text.
+      if (known?.state === "dirty") {
+        try {
+          await this.plugin.getInboundMentions(file);
+        } catch (error) {
+          console.error("Graph List: inbound mention scan failed", error);
+        }
+        if (token !== this.renderToken) return;
+        known = this.plugin.peekInboundMentions(file);
       }
-      if (token !== this.renderToken) return;
+      if (known) inbound = this.collectInbound(known.found);
+      if (known?.state !== "fresh") void this.refreshInbound(file, token, inbound);
     }
 
     const { contentEl } = this;
     contentEl.empty();
     this.renderedPaths.clear();
     this.texts.clear();
+    this.shown = { file, inbound };
 
     this.renderHeader(contentEl, file);
 

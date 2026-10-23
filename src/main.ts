@@ -35,6 +35,15 @@ interface InboundCache {
   dirty: Set<string>;
   /** Scans run one after another, so a render never reads a half-filled map. */
   ready: Promise<void>;
+  /** Scans queued or running. */
+  pending: number;
+  /** Whether the full scan has finished, so `found` covers the vault. */
+  complete: boolean;
+}
+
+export interface InboundPeek {
+  found: Map<string, Mention>;
+  state: "fresh" | "dirty" | "stale";
 }
 
 export default class LocalGraphListPlugin extends Plugin {
@@ -47,6 +56,9 @@ export default class LocalGraphListPlugin extends Plugin {
   private mentionIndex: MentionIndex | null = null;
 
   private inbound: InboundCache | null = null;
+
+  /** The last finished scan, kept across a reset of the cache. */
+  private lastInbound: { target: string; found: Map<string, Mention> } | null = null;
 
   /**
    * Per-file link targets and aliases as of the last build, so an edit that
@@ -211,35 +223,49 @@ export default class LocalGraphListPlugin extends Plugin {
     let full = false;
 
     if (!cache || cache.target !== target.path || cache.index !== index) {
-      cache = { target: target.path, index, found: new Map(), dirty: new Set(), ready: Promise.resolve() };
+      cache = {
+        target: target.path,
+        index,
+        found: new Map(),
+        dirty: new Set(),
+        ready: Promise.resolve(),
+        pending: 0,
+        complete: false,
+      };
       this.inbound = cache;
       full = true;
     }
 
     const current = cache;
+    current.pending += 1;
     current.ready = current.ready.then(async () => {
-      let sources: TFile[];
-      if (full) {
-        sources = this.app.vault.getMarkdownFiles();
-      } else {
-        sources = [];
-        for (const path of current.dirty) {
-          current.found.delete(path);
+      try {
+        const rescanned = full ? null : [...current.dirty];
+        current.dirty.clear();
+        const sources: TFile[] = [];
+        for (const path of rescanned ?? []) {
           const file = this.app.vault.getAbstractFileByPath(path);
           if (file instanceof TFile) sources.push(file);
         }
-      }
-      current.dirty.clear();
 
-      // A switch to another note replaces the cache; this scan then stops.
-      const found = await findInboundMentions(
-        this.app,
-        target,
-        index,
-        sources,
-        () => this.inbound !== current
-      );
-      for (const [path, mention] of found) current.found.set(path, mention);
+        // A switch to another note replaces the cache; this scan then stops.
+        const found = await findInboundMentions(
+          this.app,
+          target,
+          index,
+          rescanned ? sources : this.app.vault.getMarkdownFiles(),
+          () => this.inbound !== current
+        );
+        if (this.inbound !== current) return;
+
+        // Swapped in only once the scan is done, so a peek never sees a gap.
+        for (const path of rescanned ?? []) current.found.delete(path);
+        for (const [path, mention] of found) current.found.set(path, mention);
+        current.complete = true;
+        this.lastInbound = { target: target.path, found: current.found };
+      } finally {
+        current.pending -= 1;
+      }
     });
 
     try {
@@ -250,6 +276,24 @@ export default class LocalGraphListPlugin extends Plugin {
       throw error;
     }
     return current.found;
+  }
+
+  /**
+   * Inbound mentions of `target` as last scanned, without waiting for a scan.
+   * "fresh" is up to date; "dirty" owes a rescan of the few notes that changed
+   * since; "stale" is from before a reset and owes a whole-vault scan. Null
+   * when `target` has never been scanned.
+   */
+  peekInboundMentions(target: TFile): InboundPeek | null {
+    const cache = this.inbound;
+    if (cache?.complete && cache.target === target.path && cache.index === this.getMentionIndex()) {
+      const fresh = cache.pending === 0 && cache.dirty.size === 0;
+      return { found: cache.found, state: fresh ? "fresh" : "dirty" };
+    }
+    // A new note or alias resets the cache, but the old rows are nearly all
+    // still right, so they stay up until the new scan replaces them.
+    if (this.lastInbound?.target === target.path) return { found: this.lastInbound.found, state: "stale" };
+    return null;
   }
 
   /** Rescan `path` the next time inbound mentions are asked for. */
