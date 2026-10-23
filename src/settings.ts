@@ -413,7 +413,9 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
 
     return {
       type: "list",
-      heading: "Shown under each title",
+      // Styled as part of Preview, not a section of its own.
+      heading: "Properties",
+      cls: "lgl-subgroup",
       emptyState: "No properties selected. Only titles will be shown.",
       addItem: {
         name: "Add property",

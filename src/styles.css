@@ -150,6 +150,23 @@
   width: 100%;
 }
 
+/* The property list belongs to Preview: sit close under it with a quiet label
+   rather than a heading of its own. */
+.modal .setting-group.lgl-subgroup {
+  margin-top: var(--size-4-2);
+}
+
+.modal .setting-group.lgl-subgroup > .setting-item-heading {
+  padding-top: 0;
+  padding-bottom: var(--size-4-1);
+}
+
+.modal .setting-group.lgl-subgroup > .setting-item-heading .setting-item-name {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-normal);
+  color: var(--text-muted);
+}
+
 /* Unlinked mentions: present but not yet part of the graph. The link button
    only appears on hover so the ghost rows stay quiet at rest. A row that is
    already linked but mentioned again stays solid and gets the same button. */
