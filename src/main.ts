@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   RETIRED_PROPERTIES,
+  RETIRED_SETTINGS,
   LocalGraphListSettingTab,
   LocalGraphListSettings,
 } from "./settings";
@@ -336,6 +337,10 @@ export default class LocalGraphListPlugin extends Plugin {
   async loadSettings() {
     const saved = (await this.loadData()) as Partial<LocalGraphListSettings> | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // Depth 2 was the old way to turn suggestions on.
+    const retired = this.settings as unknown as Record<string, unknown>;
+    if (saved && !("suggestLinks" in saved) && retired.depth === 2) this.settings.suggestLinks = true;
+    for (const key of RETIRED_SETTINGS) delete retired[key];
     // A fresh array, since the settings tab edits it in place, minus retired keys.
     this.settings.properties = this.settings.properties.filter((key) => !RETIRED_PROPERTIES.has(key));
   }

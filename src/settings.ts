@@ -10,13 +10,15 @@ import {
 } from "obsidian";
 import type LocalGraphListPlugin from "./main";
 import type { MentionScope } from "./mentions";
-import type { ProximityAlgorithm } from "./ppr";
 
 /**
  * Retired display keys: `sort` followed the sort key and `proximity` was the
  * score, which is no longer shown. Stripped from saved settings.
  */
 export const RETIRED_PROPERTIES = new Set(["sort", "proximity"]);
+
+/** Retired settings: the algorithm is fixed now, and depth became a toggle. */
+export const RETIRED_SETTINGS = ["algorithm", "depth"];
 
 export type SortKey =
   | "proximity"
@@ -49,10 +51,10 @@ export interface LocalGraphListSettings {
   showInboundMentions: boolean;
   /** Whether the link button converts the first mention of a note or all of them. */
   mentionScope: MentionScope;
-  /** How shared neighbours are discounted by their degree. */
-  algorithm: ProximityAlgorithm;
-  /** 1 lists linked notes; 2 also suggests unlinked notes two links away. */
-  depth: 1 | 2;
+  /** Also suggest unlinked notes two links away. */
+  suggestLinks: boolean;
+  /** Text or list property that accepting a suggestion adds the link to. */
+  suggestionProperty: string;
 }
 
 export const DEFAULT_SETTINGS: LocalGraphListSettings = {
@@ -67,8 +69,8 @@ export const DEFAULT_SETTINGS: LocalGraphListSettings = {
   showMentions: true,
   showInboundMentions: true,
   mentionScope: "first",
-  algorithm: "adamic-adar",
-  depth: 1,
+  suggestLinks: false,
+  suggestionProperty: "",
 };
 
 /** Pseudo-properties read off the file itself rather than frontmatter. */
@@ -108,17 +110,73 @@ export function getAllPropertyKeys(app: App): string[] {
   return [...keys].sort((a, b) => a.localeCompare(b));
 }
 
+/** Properties that hold note names rather than links, so never take a suggestion. */
+const NON_LINK_PROPERTIES = new Set(["tags", "aliases", "cssclasses"]);
+
+interface AppWithTypeManager {
+  metadataTypeManager?: {
+    getAssignedWidget?: (name: string) => string | null;
+    properties?: Record<string, { widget?: string } | undefined>;
+  };
+}
+
+/**
+ * The property's type in the Properties view, such as "text" or "multitext":
+ * the one the user set, else the one Obsidian inferred from the values.
+ */
+export function getPropertyType(app: App, name: string): string | null {
+  const manager = (app as AppWithTypeManager).metadataTypeManager;
+  return manager?.getAssignedWidget?.(name) ?? manager?.properties?.[name.toLowerCase()]?.widget ?? null;
+}
+
+/**
+ * Existing text and list properties, the two types a link can go in. Without
+ * the type registry, any key holding a string or a list of strings.
+ */
+export function getLinkPropertyKeys(app: App): string[] {
+  const keys = new Set<string>();
+  const registry = (app as AppWithPropertyRegistry).metadataTypeManager?.properties;
+
+  if (registry && typeof registry === "object") {
+    for (const key of Object.keys(registry)) {
+      const name = (registry[key] as { name?: string }).name ?? key;
+      const type = getPropertyType(app, name);
+      if (type === "text" || type === "multitext") keys.add(name);
+    }
+  } else {
+    for (const file of app.vault.getMarkdownFiles()) {
+      const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+      if (!fm) continue;
+      for (const [key, value] of Object.entries(fm)) {
+        const strings = Array.isArray(value) ? value.every((entry) => typeof entry === "string") : typeof value === "string";
+        if (strings) keys.add(key);
+      }
+    }
+  }
+
+  return [...keys]
+    .filter((key) => !NON_LINK_PROPERTIES.has(key.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b));
+}
+
 class PropertySuggest extends AbstractInputSuggest<string> {
   private onPick: (value: string) => void;
+  private keys: (app: App) => string[];
 
-  constructor(app: App, inputEl: HTMLInputElement, onPick: (value: string) => void) {
+  constructor(
+    app: App,
+    inputEl: HTMLInputElement,
+    onPick: (value: string) => void,
+    keys: (app: App) => string[] = getAllPropertyKeys
+  ) {
     super(app, inputEl);
     this.onPick = onPick;
+    this.keys = keys;
   }
 
   getSuggestions(query: string): string[] {
     const q = query.toLowerCase();
-    return getAllPropertyKeys(this.app)
+    return this.keys(this.app)
       .filter((key) => key.toLowerCase().includes(q))
       .slice(0, 20);
   }
@@ -163,16 +221,13 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
-    const value = this.plugin.settings[key as keyof LocalGraphListSettings];
-    // Dropdown options are strings; depth is stored as a number.
-    return key === "depth" ? String(value) : value;
+    return this.plugin.settings[key as keyof LocalGraphListSettings];
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
-    (this.plugin.settings as unknown as Record<string, unknown>)[key] =
-      key === "depth" ? Number(value) : value;
+    (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
     // These rewrite their own descriptions; the rest only show or hide rows.
-    if (key === "mentionScope" || key === "algorithm" || key === "preview") await this.commitAndUpdate();
+    if (key === "mentionScope" || key === "preview") await this.commitAndUpdate();
     else {
       await this.commit();
       this.refreshDomState();
@@ -254,29 +309,50 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
       heading: "Graph",
       items: [
         {
-          name: "Algorithm",
+          name: "Suggested links",
           desc:
-            settings.algorithm === "adamic-adar"
-              ? "Adamic-Adar: each shared neighbour counts 1/log(its links), so busy notes are discounted gently."
-              : "Resource allocation: each shared neighbour counts 1/(its links), so a daily note or hub page counts for almost nothing.",
-          control: {
-            type: "dropdown",
-            key: "algorithm",
-            options: {
-              "adamic-adar": "Adamic-Adar",
-              "resource-allocation": "Resource allocation",
-            },
-          },
+            "A Suggested group lists notes this one does not link yet but shares at least " +
+            "two neighbours with, each with the notes they share.",
+          control: { type: "toggle", key: "suggestLinks" },
         },
         {
-          name: "Depth",
+          name: "Add suggestions to",
           desc:
-            "At 2, a Suggested group lists notes this one does not link yet but shares at " +
-            "least two neighbours with, each with the notes they share.",
-          control: {
-            type: "dropdown",
-            key: "depth",
-            options: { "1": "1: linked notes", "2": "2: also suggest related notes" },
+            "A text or list property. Each suggestion gets a button that adds it to this " +
+            "property in the open note. Leave empty for no button.",
+          visible: () => settings.suggestLinks,
+          render: (setting) => {
+            setting.addText((text) => {
+              // Only existing properties: a typed name that matches none is dropped.
+              // Listed once per focus, since a fallback listing reads every note.
+              let keys: string[] | null = null;
+              text
+                .setPlaceholder("Property")
+                .setValue(settings.suggestionProperty)
+                .onChange((value) => {
+                  const typed = value.trim().toLowerCase();
+                  keys ??= getLinkPropertyKeys(this.app);
+                  const match = typed === "" ? "" : keys.find((key) => key.toLowerCase() === typed);
+                  if (match === undefined) return;
+                  settings.suggestionProperty = match;
+                  this.commitSoon();
+                });
+              text.inputEl.addEventListener("focus", () => {
+                keys = null;
+              });
+              text.inputEl.addEventListener("blur", () => {
+                text.setValue(settings.suggestionProperty);
+              });
+              new PropertySuggest(
+                this.app,
+                text.inputEl,
+                (key) => {
+                  settings.suggestionProperty = key;
+                  void this.commit();
+                },
+                getLinkPropertyKeys
+              );
+            });
           },
         },
       ],

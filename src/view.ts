@@ -11,7 +11,8 @@ import {
 import type LocalGraphListPlugin from "./main";
 import { findLinkRange, snippetFor, type LinkRange } from "./context";
 import { NOTE_EXTENSIONS, buildGroups, getPropertyValue, unwrapLink, type Direction } from "./graph";
-import type { SortKey } from "./settings";
+import { getPropertyType, type SortKey } from "./settings";
+import { addLinkToProperty, type AddLinkResult } from "./frontmatter";
 import { proximityScores, suggestNotes, type Suggestion } from "./ppr";
 import {
   findUnlinkedMentions,
@@ -270,14 +271,14 @@ export class LocalGraphListView extends ItemView {
     const ghostPaths = new Set([...unlinked.out, ...unlinked.in].map((ghost) => ghost.path));
 
     const adjacency = this.plugin.getAdjacency();
-    const proximity = proximityScores(adjacency, file.path, settings.algorithm, ghostPaths);
+    const proximity = proximityScores(adjacency, file.path, ghostPaths);
     const groups = buildGroups(this.app, file, settings, proximity, unlinked);
 
     // A suggestion that is also an unlinked mention already has a ghost row
     // with a link button, so it is left to that row.
     const suggestions =
-      settings.depth === 2
-        ? this.collectSuggestions(suggestNotes(adjacency, file.path, settings.algorithm), ghostPaths)
+      settings.suggestLinks
+        ? this.collectSuggestions(suggestNotes(adjacency, file.path), ghostPaths)
         : [];
 
     if (groups.every((group) => group.files.length === 0) && suggestions.length === 0) {
@@ -482,6 +483,56 @@ export class LocalGraphListView extends ItemView {
     });
   }
 
+  /** Hover button that adds the suggested note to the chosen property of the open note. */
+  private renderSuggestionButton(parent: HTMLElement, target: TFile, open: TFile): void {
+    const key = this.plugin.settings.suggestionProperty;
+    const add = parent.createEl("button", {
+      cls: "clickable-icon lgl-accept",
+      attr: { type: "button", "aria-label": `Add to ${key}` },
+    });
+    setIcon(add, "plus");
+    add.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      void this.addSuggestion(add, target, open, key);
+    });
+  }
+
+  /** Same guards as accepting a mention: one write at a time, for the note on screen. */
+  private async addSuggestion(add: HTMLButtonElement, target: TFile, open: TFile, key: string): Promise<void> {
+    if (add.disabled || open.extension !== "md") return;
+    if (this.getTargetFile()?.path !== open.path) {
+      this.render();
+      return;
+    }
+
+    // An unknown type follows the value already there.
+    const type = getPropertyType(this.app, key);
+    if (type !== null && type !== "text" && type !== "multitext") {
+      new Notice(`${key} is a ${type} property. Pick a text or list property.`);
+      return;
+    }
+    const list = type === null ? undefined : type === "multitext";
+    const link = `[[${this.app.metadataCache.fileToLinktext(target, open.path, true)}]]`;
+
+    add.disabled = true;
+    try {
+      let result = "added" as AddLinkResult;
+      await this.app.fileManager.processFrontMatter(open, (frontmatter: Record<string, unknown>) => {
+        result = addLinkToProperty(frontmatter, key, link, list);
+      });
+      // The new link re-renders through onMetadataResolved, which moves the row
+      // into the linked notes.
+      if (result === "full") new Notice(`${key} already has a value. Pick a list property to add more.`);
+      else if (result === "present") new Notice(`${key} already links "${target.basename}".`);
+    } catch (error) {
+      console.error("Graph List: adding suggestion failed", error);
+      new Notice(`Could not add "${target.basename}" to ${key}.`);
+    } finally {
+      add.disabled = false;
+    }
+  }
+
   /** Link the mention, unless the row is busy or no longer for the open note. */
   private async acceptMention(
     accept: HTMLButtonElement,
@@ -633,6 +684,9 @@ export class LocalGraphListView extends ItemView {
       const actions = item.createDiv({ cls: "lgl-actions" });
       if (row.inMention) this.renderAcceptButton(actions, row.inMention, file, source);
       if (row.outMention) this.renderAcceptButton(actions, row.outMention, source, source);
+    } else if (via && this.plugin.settings.suggestionProperty && source.extension === "md") {
+      item.addClass("lgl-has-mentions");
+      this.renderSuggestionButton(item.createDiv({ cls: "lgl-actions" }), file, source);
     }
 
     if (this.plugin.settings.showIndex) {
