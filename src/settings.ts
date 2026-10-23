@@ -114,12 +114,19 @@ export function getAllPropertyKeys(app: App): string[] {
 const NON_LINK_PROPERTIES = new Set(["tags", "aliases", "cssclasses"]);
 
 interface AppWithTypeManager {
-  metadataTypeManager?: { getAssignedWidget?: (name: string) => string | null };
+  metadataTypeManager?: {
+    getAssignedWidget?: (name: string) => string | null;
+    properties?: Record<string, { widget?: string } | undefined>;
+  };
 }
 
-/** The property's type in the Properties view, such as "text" or "multitext". */
+/**
+ * The property's type in the Properties view, such as "text" or "multitext":
+ * the one the user set, else the one Obsidian inferred from the values.
+ */
 export function getPropertyType(app: App, name: string): string | null {
-  return (app as AppWithTypeManager).metadataTypeManager?.getAssignedWidget?.(name) ?? null;
+  const manager = (app as AppWithTypeManager).metadataTypeManager;
+  return manager?.getAssignedWidget?.(name) ?? manager?.properties?.[name.toLowerCase()]?.widget ?? null;
 }
 
 /**
@@ -317,15 +324,22 @@ export class LocalGraphListSettingTab extends PluginSettingTab {
           render: (setting) => {
             setting.addText((text) => {
               // Only existing properties: a typed name that matches none is dropped.
-              const valid = (value: string) => value === "" || getLinkPropertyKeys(this.app).includes(value);
+              // Listed once per focus, since a fallback listing reads every note.
+              let keys: string[] | null = null;
               text
                 .setPlaceholder("Property")
                 .setValue(settings.suggestionProperty)
                 .onChange((value) => {
-                  if (!valid(value.trim())) return;
-                  settings.suggestionProperty = value.trim();
+                  const typed = value.trim().toLowerCase();
+                  keys ??= getLinkPropertyKeys(this.app);
+                  const match = typed === "" ? "" : keys.find((key) => key.toLowerCase() === typed);
+                  if (match === undefined) return;
+                  settings.suggestionProperty = match;
                   this.commitSoon();
                 });
+              text.inputEl.addEventListener("focus", () => {
+                keys = null;
+              });
               text.inputEl.addEventListener("blur", () => {
                 text.setValue(settings.suggestionProperty);
               });

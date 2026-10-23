@@ -500,14 +500,20 @@ export class LocalGraphListView extends ItemView {
 
   /** Same guards as accepting a mention: one write at a time, for the note on screen. */
   private async addSuggestion(add: HTMLButtonElement, target: TFile, open: TFile, key: string): Promise<void> {
-    if (add.disabled) return;
+    if (add.disabled || open.extension !== "md") return;
     if (this.getTargetFile()?.path !== open.path) {
       this.render();
       return;
     }
 
+    // An unknown type follows the value already there.
+    const type = getPropertyType(this.app, key);
+    if (type !== null && type !== "text" && type !== "multitext") {
+      new Notice(`${key} is a ${type} property. Pick a text or list property.`);
+      return;
+    }
+    const list = type === null ? undefined : type === "multitext";
     const link = `[[${this.app.metadataCache.fileToLinktext(target, open.path, true)}]]`;
-    const list = getPropertyType(this.app, key) !== "text";
 
     add.disabled = true;
     try {
@@ -678,7 +684,7 @@ export class LocalGraphListView extends ItemView {
       const actions = item.createDiv({ cls: "lgl-actions" });
       if (row.inMention) this.renderAcceptButton(actions, row.inMention, file, source);
       if (row.outMention) this.renderAcceptButton(actions, row.outMention, source, source);
-    } else if (via && this.plugin.settings.suggestionProperty) {
+    } else if (via && this.plugin.settings.suggestionProperty && source.extension === "md") {
       item.addClass("lgl-has-mentions");
       this.renderSuggestionButton(item.createDiv({ cls: "lgl-actions" }), file, source);
     }

@@ -30,6 +30,16 @@ test("a text property takes the link only while empty", () => {
   assert.equal(fm.parent, "[[A]]");
 });
 
+test("an unknown type follows the value already there", () => {
+  const fm: Record<string, unknown> = { parent: "[[A]]", related: ["[[A]]"] };
+  assert.equal(addLinkToProperty(fm, "parent", "[[B]]"), "full");
+  assert.equal(fm.parent, "[[A]]");
+  addLinkToProperty(fm, "related", "[[B]]");
+  assert.deepEqual(fm.related, ["[[A]]", "[[B]]"]);
+  addLinkToProperty(fm, "new", "[[B]]");
+  assert.deepEqual(fm.new, ["[[B]]"]);
+});
+
 test("an existing key is matched case-insensitively", () => {
   const fm: Record<string, unknown> = { "Related Pages": ["[[A]]"] };
   addLinkToProperty(fm, "related pages", "[[B]]", true);
