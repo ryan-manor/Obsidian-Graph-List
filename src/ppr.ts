@@ -103,28 +103,23 @@ export function pushPPR(
 }
 
 /**
- * How a shared neighbour z is discounted by its degree. Adamic-Adar weighs it
- * 1/log(deg z); Resource Allocation 1/deg z, which is the share of a unit of
- * resource z passes to each of its links. RA is much harsher on hubs: a note
- * with 72 links counts for a quarter under AA but a seventy-second under RA.
+ * A shared neighbour z counts 1/deg z: the share of a unit of resource z
+ * passes to each of its links. A daily note or hub page with 72 links counts
+ * for a seventy-second. Adamic-Adar's gentler 1/log(deg z) was tried and
+ * dropped: it let hubs carry the ranking.
  */
-export type ProximityAlgorithm = "adamic-adar" | "resource-allocation";
-
-function hubWeight(algorithm: ProximityAlgorithm, degree: number): number {
-  if (degree <= 1) return 0;
-  return algorithm === "resource-allocation" ? 1 / degree : 1 / Math.log(degree);
+function hubWeight(degree: number): number {
+  return degree <= 1 ? 0 : 1 / degree;
 }
 
 /**
- * Shared-neighbour score from `source`: for every note v reachable through a
- * shared neighbour z, the sum over z of z's hub weight. Strictly a 2-hop
- * signal. `via`, when given, collects each v's shared neighbours, strongest
- * first.
+ * Resource Allocation from `source`: for every note v reachable through a
+ * shared neighbour z, RA(v) = sum over z of 1/deg z. Strictly a 2-hop signal.
+ * `via`, when given, collects each v's shared neighbours, strongest first.
  */
-export function sharedNeighborScores(
+export function resourceAllocation(
   adj: AdjMap,
   source: string,
-  algorithm: ProximityAlgorithm,
   via?: Map<string, string[]>
 ): Map<string, number> {
   const scores = new Map<string, number>();
@@ -133,7 +128,7 @@ export function sharedNeighborScores(
 
   // Strongest intermediary first, so each `via` list comes out ordered.
   const ordered = [...neighbors]
-    .map((z) => ({ z, weight: hubWeight(algorithm, adj.get(z)?.size ?? 0) }))
+    .map((z) => ({ z, weight: hubWeight(adj.get(z)?.size ?? 0) }))
     .filter(({ weight }) => weight > 0)
     .sort((a, b) => b.weight - a.weight);
 
@@ -152,20 +147,6 @@ export function sharedNeighborScores(
   return scores;
 }
 
-/**
- * Adamic-Adar proximity from `source`: for every note v reachable through a
- * shared neighbour z, AA(v) = sum over z of 1/log(deg z). The 1/log(deg) term
- * discounts hub intermediaries. Strictly a 2-hop signal.
- */
-export function adamicAdar(adj: AdjMap, source: string): Map<string, number> {
-  return sharedNeighborScores(adj, source, "adamic-adar");
-}
-
-/** Resource Allocation from `source`: RA(v) = sum over shared neighbours z of 1/deg z. */
-export function resourceAllocation(adj: AdjMap, source: string): Map<string, number> {
-  return sharedNeighborScores(adj, source, "resource-allocation");
-}
-
 /** One shared neighbour is a coincidence; two is a pattern. */
 const MIN_SHARED = 2;
 
@@ -181,13 +162,9 @@ export interface Suggestion {
  * the link-prediction reading of the same score the list sorts by. A
  * candidate needs at least two shared neighbours to count.
  */
-export function suggestNotes(
-  adj: AdjMap,
-  source: string,
-  algorithm: ProximityAlgorithm
-): Suggestion[] {
+export function suggestNotes(adj: AdjMap, source: string): Suggestion[] {
   const via = new Map<string, string[]>();
-  const scores = sharedNeighborScores(adj, source, algorithm, via);
+  const scores = resourceAllocation(adj, source, via);
   const neighbors = adj.get(source) ?? new Set<string>();
 
   const suggestions: Suggestion[] = [];
@@ -208,13 +185,12 @@ const PPR_TIEBREAK = 1e-3;
 
 /**
  * Proximity score per note, seeded at `source` and scaled so the strongest
- * neighbour is 1. A shared-neighbour score (Adamic-Adar by default, or
- * Resource Allocation) ranks; push-PPR breaks its ties.
+ * neighbour is 1. Resource Allocation ranks; push-PPR breaks its ties.
  *
  * The shared-neighbour score carries the ordering because it asks the question the list cares
  * about: how much of this note's neighbourhood does that note also sit in? Ties
  * are exact and common, so push-PPR mass, which sees paths of any length, not
- * just the 2-hop ones AA counts, separates them, including the neighbours that
+ * just the 2-hop ones RA counts, separates them, including the neighbours that
  * share nothing and would otherwise all sit at zero.
  *
  * Two alternatives were measured on this vault and rejected:
@@ -238,16 +214,15 @@ const PPR_TIEBREAK = 1e-3;
 export function proximityScores(
   adj: AdjMap,
   source: string,
-  algorithm: ProximityAlgorithm = "adamic-adar",
   /** Notes treated as direct neighbours for the floor, such as unlinked mentions. */
   extra: Iterable<string> = []
 ): Map<string, number> {
-  const aa = sharedNeighborScores(adj, source, algorithm);
+  const ra = resourceAllocation(adj, source);
   const mass = pushPPR(adj, source);
 
-  let aaMax = 0;
-  for (const [path, score] of aa) {
-    if (path !== source && score > aaMax) aaMax = score;
+  let raMax = 0;
+  for (const [path, score] of ra) {
+    if (path !== source && score > raMax) raMax = score;
   }
 
   let pprMax = 0;
@@ -257,22 +232,22 @@ export function proximityScores(
 
   const scores = new Map<string, number>();
   const neighbors = new Set([...(adj.get(source) ?? []), ...extra]);
-  if (pprMax <= 0 && aaMax <= 0) {
+  if (pprMax <= 0 && raMax <= 0) {
     // Nothing reached past the source: its neighbours are all equally close.
     for (const path of neighbors) if (path !== source) scores.set(path, 1);
     return scores;
   }
 
-  const paths = new Set<string>([...aa.keys(), ...mass.keys()]);
+  const paths = new Set<string>([...ra.keys(), ...mass.keys()]);
   for (const path of paths) {
     if (path === source) continue;
     const near = pprMax > 0 ? (mass.get(path) ?? 0) / pprMax : 0;
-    if (aaMax <= 0) {
+    if (raMax <= 0) {
       // No shared neighbours anywhere: PPR is the only ordering left.
       if (near > 0) scores.set(path, near);
       continue;
     }
-    scores.set(path, (aa.get(path) ?? 0) / aaMax + PPR_TIEBREAK * near);
+    scores.set(path, (ra.get(path) ?? 0) / raMax + PPR_TIEBREAK * near);
   }
 
   let weakest = Infinity;
